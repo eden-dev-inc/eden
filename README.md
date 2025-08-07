@@ -14,31 +14,6 @@ Eden serves as a unified data platform that abstracts the complexity of managing
 - **Operational Excellence**: Built-in monitoring, connection pooling, and health management
 - **Developer Productivity**: Reusable templates, APIs, and workflows for rapid development
 
-## Architecture Overview
-
-Eden is built around several core concepts that work together to provide a complete data platform:
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Applications  │    │      APIs       │    │   Workflows     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-┌─────────────────────────────────────────────────────────────────┐
-│                          Eden Platform                          │
-├─────────────────┬─────────────────┬─────────────────┬───────────┤
-│   Templates     │   Endpoints     │      RBAC       │    MCP    │
-│   (Operations)  │ (Connections)   │   (Security)    │   (AI)    │
-└─────────────────┴─────────────────┴─────────────────┴───────────┘
-         │                       │                       │
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   PostgreSQL    │    │     MongoDB     │    │      Redis      │
-│     MySQL       │    │   ClickHouse    │    │    HTTP APIs    │
-│   SQL Server    │    │   Cassandra     │    │   LLM Services  │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-```
-
 ## Core Components
 
 ### 1. Organizations
