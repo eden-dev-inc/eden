@@ -1,8 +1,8 @@
 ---
 title: "Tackling the Post-Migration Crisis: The Story Behind Eden's Data Solution"
 excerpt: "At Eden, we're obsessed with the complexities of the data tech stack. It's been described to us as a mangled ball of duct tape, something you shove into an imaginary technical closet and hope for the best."
-publishedAt: "2024-08-12"
-updatedAt: "2024-08-12"
+publishedAt: "2025-08-12"
+updatedAt: "2025-08-12"
 author:
   name: "Eden Team"
   avatar: "https://github.com/eden-dev-inc.png"
