@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -23,7 +23,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "6377:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -41,6 +41,10 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/analytics
       - REDIS_URL=redis://redis:6379
+      # this should be the same Redis as redis:6379
+      # - REDIS_URL=redis://host.docker.internal:6377
+      # this should be Redis through Eden Interlay
+      # - REDIS_URL=redis://host.docker.internal:6366
       - BIND_ADDRESS=0.0.0.0:3000
       - EVENTS_PER_SECOND=${EVENTS_PER_SECOND:-100}
       - QUERIES_PER_SECOND=${QUERIES_PER_SECOND:-200}
