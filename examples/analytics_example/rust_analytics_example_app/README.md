@@ -86,10 +86,10 @@ Simulates a SaaS analytics platform:
 
 **Event Distribution**:
 - 60% Page Views
-- 25% Clicks  
+- 28% Clicks  
 - 10% Conversions
-- 3% Sign-ups
-- 2% Purchases
+- 1.5% Sign-ups
+- 0.5% Purchases
 
 **Query Patterns**:
 - 70% Dashboard overview (high cache hit)

@@ -171,11 +171,11 @@ impl DataGenerator {
         // Cumulative distribution matching real analytics platforms
         if rand < 0.60 {
             EventType::PageView
-        } else if rand < 0.85 {
+        } else if rand < 0.88 {
             EventType::Click
-        } else if rand < 0.95 {
-            EventType::Conversion
         } else if rand < 0.98 {
+            EventType::Conversion
+        } else if rand < 0.995 {
             EventType::SignUp
         } else {
             EventType::Purchase

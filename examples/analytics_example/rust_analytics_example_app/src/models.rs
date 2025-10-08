@@ -30,7 +30,7 @@ pub struct User {
 }
 
 /// EventType enum represents different types of user activities
-/// Distribution: 60% PageView, 25% Click, 10% Conversion, 3% SignUp, 2% Purchase
+/// Distribution: 60% PageView, 28% Click, 10% Conversion, 1.5% SignUp, 0.5% Purchase
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EventType {
     /// User navigating to a page or screen

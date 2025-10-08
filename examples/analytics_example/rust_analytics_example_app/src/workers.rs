@@ -268,7 +268,7 @@ impl QuerySimulatorWorker {
         let db_duration = db_start.elapsed().as_secs_f64();
         self.metrics.record_db_operation("select", "success", db_duration);
 
-        self.cache.set(&cache_key, &overview, 300, &self.metrics).await?;
+        self.cache.set(&cache_key, &overview, 600, &self.metrics).await?;
 
         Ok(false)
     }
@@ -299,7 +299,7 @@ impl QuerySimulatorWorker {
         self.metrics.record_db_operation("select", "success", db_duration);
 
         // Cache result with 10-minute TTL
-        let set_result = self.cache.set(&cache_key, &top_pages, 600, &self.metrics).await;
+        let set_result = self.cache.set(&cache_key, &top_pages, 1200, &self.metrics).await;
 
         match set_result {
             Ok(_) => {
@@ -371,7 +371,7 @@ impl CacheWarmupWorker {
                     let db_duration = db_start.elapsed().as_secs_f64();
                     self.metrics.record_db_operation("select", "success", db_duration);
 
-                    self.cache.set(&overview_key, &overview, 300, &self.metrics).await;
+                    self.cache.set(&overview_key, &overview, 600, &self.metrics).await;
                 }
                 Err(_) => {
                 }
@@ -391,7 +391,7 @@ impl CacheWarmupWorker {
                     let db_duration = db_start.elapsed().as_secs_f64();
                     self.metrics.record_db_operation("select", "success", db_duration);
 
-                    self.cache.set(&pages_key, &top_pages, 600, &self.metrics).await;
+                    self.cache.set(&pages_key, &top_pages, 1200, &self.metrics).await;
                 }
                 Err(_) => {
                 }
