@@ -1,12 +1,12 @@
 // Background Workers
 //
 // This module contains the background workers that generate realistic load patterns.
-// These workers run continuously to simulate user activity, execute queries, and
-// maintain cache warmth without requiring external API calls.
+// Workers use continuous task pools to achieve high throughput without spawning overhead.
 
 use anyhow::Result;
 use rand::{rngs::StdRng, SeedableRng, Rng};
 use std::{sync::Arc, time::Instant};
+use tokio::time::{sleep, Duration};
 use tracing::{debug, info};
 use uuid::Uuid;
 
@@ -20,8 +20,6 @@ use crate::config::Config;
 use crate::models::Event;
 
 /// EventGeneratorWorker simulates realistic user activity by creating events
-/// Generates page views, clicks, conversions, signups, and purchases
-/// at the configured rate with proper distribution patterns
 pub struct EventGeneratorWorker {
     database: Arc<Database>,
     cache: Arc<RedisCache>,
@@ -30,7 +28,6 @@ pub struct EventGeneratorWorker {
 }
 
 impl EventGeneratorWorker {
-    /// Create a new event generator worker with shared services
     pub fn new(
         database: Arc<Database>,
         cache: Arc<RedisCache>,
@@ -45,21 +42,16 @@ impl EventGeneratorWorker {
         }
     }
 
-    /// Generate a batch of events at the specified rate with efficient batching
-    /// Called every second by the main event generation loop
-    /// Uses batch inserts for better performance at high throughput
     pub async fn run_batch(&self, events_per_second: u64, organizations: u32) -> Result<()> {
         let start = Instant::now();
         let mut success_count = 0u64;
         let mut error_count = 0u64;
 
-        // Get random organization IDs for load distribution
         let org_ids = self.database.get_random_organization_ids(organizations).await?;
         if org_ids.is_empty() {
             return Ok(());
         }
 
-        // Pre-fetch user IDs for all organizations to avoid repeated queries
         let mut org_users: std::collections::HashMap<Uuid, Vec<Uuid>> = std::collections::HashMap::new();
         for &org_id in &org_ids {
             match self.database.get_random_user_ids(org_id, 50).await {
@@ -68,7 +60,6 @@ impl EventGeneratorWorker {
             }
         }
 
-        // Generate events in batches for better memory management
         const BATCH_SIZE: usize = 500;
         let total_events = events_per_second as usize;
         let num_batches = (total_events + BATCH_SIZE - 1) / BATCH_SIZE;
@@ -78,7 +69,6 @@ impl EventGeneratorWorker {
             let batch_end = std::cmp::min(batch_start + BATCH_SIZE, total_events);
             let batch_size = batch_end - batch_start;
 
-            // Generate events for this batch
             let mut events = Vec::with_capacity(batch_size);
             let mut event_types = Vec::with_capacity(batch_size);
 
@@ -91,21 +81,17 @@ impl EventGeneratorWorker {
                 events.push(event);
             }
 
-            // Batch insert events and measure performance
             let insert_start = Instant::now();
             match self.database.insert_events_batch(&events).await {
                 Ok(rows_affected) => {
                     let actual_insert_duration = insert_start.elapsed().as_secs_f64();
                     success_count += rows_affected;
 
-                    // Record metrics for successful batch
                     self.metrics.record_operation_success("event_generation");
                     self.metrics.record_db_operation("batch_insert", "success", actual_insert_duration);
 
-                    // Handle cache invalidation for high-impact events
                     self.handle_cache_invalidation(&events).await?;
 
-                    // Record individual event metrics
                     for event_type in &event_types {
                         self.metrics.record_event_generated(event_type);
                     }
@@ -118,12 +104,10 @@ impl EventGeneratorWorker {
                     self.metrics.record_db_operation("batch_insert", "error", actual_insert_duration);
 
                     tracing::warn!("Batch insert failed for {} events: {}", batch_size, e);
-                    // Continue with next batch instead of failing completely
                 }
             }
         }
 
-        // Track overall batch generation performance
         let total_duration = start.elapsed().as_secs_f64();
         self.metrics.event_generation_duration.observe(total_duration);
 
@@ -135,19 +119,18 @@ impl EventGeneratorWorker {
         Ok(())
     }
 
-    /// Handle cache invalidation for events that should trigger cache clearing
-    /// Only invalidate for high-impact events to avoid excessive cache churn
     async fn handle_cache_invalidation(&self, events: &[Event]) -> Result<()> {
         let mut orgs_to_invalidate = std::collections::HashSet::new();
 
-        // Only invalidate cache for conversion and purchase events
         for event in events {
-            if matches!(EventType::from_str(&event.event_type), Some(EventType::Purchase)) {
-                orgs_to_invalidate.insert(event.organization_id);
+            match EventType::from_str(&event.event_type) {
+                Some(EventType::Purchase) | Some(EventType::Conversion) | Some(EventType::SignUp) => {
+                    orgs_to_invalidate.insert(event.organization_id);
+                }
+                _ => {}
             }
         }
 
-        // Batch cache invalidations by organization
         for org_id in orgs_to_invalidate {
             let cache_pattern = format!("analytics:{}:*", org_id);
             let cache_start = Instant::now();
@@ -167,9 +150,8 @@ impl EventGeneratorWorker {
     }
 }
 
-/// QuerySimulatorWorker executes realistic analytics queries
-/// Simulates dashboard loads, reports, and real-time analytics queries
-/// with proper caching patterns and cache hit ratios
+/// QuerySimulatorWorker executes analytics queries with proper cache-first pattern
+/// Uses a worker pool approach to achieve high query throughput
 pub struct QuerySimulatorWorker {
     database: Arc<Database>,
     cache: Arc<RedisCache>,
@@ -177,7 +159,6 @@ pub struct QuerySimulatorWorker {
 }
 
 impl QuerySimulatorWorker {
-    /// Create a new query simulator worker
     pub fn new(
         database: Arc<Database>,
         cache: Arc<RedisCache>,
@@ -190,46 +171,76 @@ impl QuerySimulatorWorker {
         }
     }
 
-    /// Execute a batch of queries at the specified rate
-    /// Distributes queries across different organizations and query types
-    /// Maintains realistic cache hit ratios through weighted selection
-    pub async fn run_batch(&self, queries_per_second: u64, organizations: u32) -> Result<()> {
-        let org_ids = self.database.get_random_organization_ids(organizations).await?;
-        if org_ids.is_empty() {
-            return Ok(());
-        }
+    /// Spawn persistent worker pool that continuously executes queries
+    /// Each worker runs independently to achieve target throughput
+    pub async fn start_worker_pool(&self, queries_per_second: u64, organizations: u32, num_workers: usize) {
+        info!("Starting query worker pool with {} workers for {} qps", num_workers, queries_per_second);
 
-        // Execute the specified number of queries per second
-        for _ in 0..queries_per_second {
-            let org_id = org_ids[StdRng::from_entropy().gen_range(0..org_ids.len())];
-            self.execute_random_query(org_id).await?;
-        }
+        // Calculate delay between queries per worker to achieve target QPS
+        let queries_per_worker = queries_per_second as f64 / num_workers as f64;
+        let delay_micros = if queries_per_worker > 0.0 {
+            (1_000_000.0 / queries_per_worker) as u64
+        } else {
+            100_000
+        };
 
-        Ok(())
+        info!("Each worker will execute with {}µs delay between queries", delay_micros);
+
+        for worker_id in 0..num_workers {
+            let database = self.database.clone();
+            let cache = self.cache.clone();
+            let metrics = self.metrics.clone();
+
+            tokio::spawn(async move {
+                let worker = QuerySimulatorWorker { database, cache, metrics };
+                worker.run_worker(worker_id, delay_micros, organizations).await;
+            });
+        }
     }
 
-    /// Execute a random query type based on realistic usage patterns
-    /// Query distribution:
-    /// - 70% Analytics overview (dashboard loads, high cache hit rate)
-    /// - 20% Top pages (content analysis, moderate cache hit rate)
-    /// - 10% Real-time stats (never cached, always fresh data)
+    /// Individual worker that continuously executes queries
+    async fn run_worker(&self, worker_id: usize, delay_micros: u64, organizations: u32) {
+        info!("Query worker {} started with {}µs delay", worker_id, delay_micros);
+
+        loop {
+            // Get random org
+            match self.database.get_random_organization_ids(organizations).await {
+                Ok(org_ids) if !org_ids.is_empty() => {
+                    let org_id = org_ids[StdRng::from_entropy().gen_range(0..org_ids.len())];
+
+                    if let Err(e) = self.execute_random_query(org_id).await {
+                        tracing::warn!("Worker {} query error: {}", worker_id, e);
+                    }
+                }
+                _ => {
+                    tracing::warn!("Worker {} could not get org IDs", worker_id);
+                }
+            }
+
+            sleep(Duration::from_micros(delay_micros)).await;
+        }
+    }
+
     async fn execute_random_query(&self, org_id: Uuid) -> Result<()> {
-        let start = Instant::now();
         let mut rng = StdRng::from_entropy();
         let query_type = rng.gen_range(0..100);
 
         let result = match query_type {
             0..=69 => self.get_analytics_overview(org_id).await,
             70..=89 => self.get_top_pages(org_id).await,
-            _ => self.get_real_time_stats(org_id).await,
+            _ => self.get_hourly_stats(org_id).await,
         };
-
-        let duration = start.elapsed().as_secs_f64();
 
         match result {
             Ok(cache_hit) => {
                 self.metrics.record_operation_success("analytics_query");
-                self.metrics.record_query_executed(duration, cache_hit);
+                self.metrics.queries_executed_total.inc();
+                // Record cache hit/miss for metrics
+                if cache_hit {
+                    self.metrics.cache_hits_total.inc();
+                } else {
+                    self.metrics.cache_misses_total.inc();
+                }
             }
             Err(e) => {
                 self.metrics.record_operation_error("analytics_query", "execution_error");
@@ -240,94 +251,94 @@ impl QuerySimulatorWorker {
         Ok(())
     }
 
-    /// Execute analytics overview query with caching
-    /// This represents expensive dashboard aggregation queries
-    /// Cache TTL: 5 minutes to balance freshness with performance
     async fn get_analytics_overview(&self, org_id: Uuid) -> Result<bool> {
         let cache_key = format!("analytics:{}:overview:24h", org_id);
 
-        let cache_key = format!("analytics:{}:overview:24h", org_id);
+        // Try cache first
+        let cache_result = self.cache.get::<serde_json::Value>(&cache_key, &self.metrics).await;
 
-        // Measure Redis GET operation
-        let cached = self.cache.get::<serde_json::Value>(&cache_key, &self.metrics).await;
-
-        match cached {
-            Ok(Some(_)) => {
+        match cache_result {
+            Ok(Some(_data)) => {
                 return Ok(true); // Cache hit
             }
             Ok(None) => {
+                // Cache miss - proceed to DB query
             }
-            Err(_) => {
-                return Err(anyhow::anyhow!("Cache error"));
-            }
-        }
-
-        // Measure database query
-        let db_start = Instant::now();
-        let overview = self.database.get_analytics_overview(org_id, 24).await?;
-        let db_duration = db_start.elapsed().as_secs_f64();
-        self.metrics.record_db_operation("select", "success", db_duration);
-
-        self.cache.set(&cache_key, &overview, 600, &self.metrics).await?;
-
-        Ok(false)
-    }
-
-    /// Execute top pages query with caching
-    /// Represents content performance analysis queries
-    /// Cache TTL: 10 minutes (less frequently updated than overview)
-    async fn get_top_pages(&self, org_id: Uuid) -> Result<bool> {
-        let cache_key = format!("analytics:{}:top_pages:24h", org_id);
-
-        let cached = self.cache.get::<Vec<serde_json::Value>>(&cache_key, &self.metrics).await;
-
-        match cached {
-            Ok(Some(_)) => {
-                return Ok(true); // Cache hit
-            }
-            Ok(None) => {
-            }
-            Err(_) => {
-                return Err(anyhow::anyhow!("Cache get error"));
+            Err(e) => {
+                tracing::warn!("Cache get error for overview: {}", e);
             }
         }
 
         // Cache miss - query database
         let db_start = Instant::now();
+        let overview = self.database.get_analytics_overview(org_id, 24).await?;
+        let db_duration = db_start.elapsed().as_secs_f64();
+        self.metrics.record_db_operation("select", "success", db_duration);
+
+        // Populate cache
+        if let Err(e) = self.cache.set(&cache_key, &overview, 300, &self.metrics).await {
+            tracing::warn!("Failed to set cache for overview: {}", e);
+        }
+
+        Ok(false)
+    }
+
+    async fn get_top_pages(&self, org_id: Uuid) -> Result<bool> {
+        let cache_key = format!("analytics:{}:top_pages:24h", org_id);
+
+        let cache_result = self.cache.get::<Vec<serde_json::Value>>(&cache_key, &self.metrics).await;
+
+        match cache_result {
+            Ok(Some(_data)) => {
+                return Ok(true);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!("Cache get error for top pages: {}", e);
+            }
+        }
+
+        let db_start = Instant::now();
         let top_pages = self.database.get_top_pages(org_id, 10).await?;
         let db_duration = db_start.elapsed().as_secs_f64();
         self.metrics.record_db_operation("select", "success", db_duration);
 
-        // Cache result with 10-minute TTL
-        let set_result = self.cache.set(&cache_key, &top_pages, 1200, &self.metrics).await;
+        if let Err(e) = self.cache.set(&cache_key, &top_pages, 600, &self.metrics).await {
+            tracing::warn!("Failed to set cache for top pages: {}", e);
+        }
 
-        match set_result {
-            Ok(_) => {
+        Ok(false)
+    }
+
+    async fn get_hourly_stats(&self, org_id: Uuid) -> Result<bool> {
+        let cache_key = format!("analytics:{}:hourly:1h", org_id);
+
+        let cache_result = self.cache.get::<serde_json::Value>(&cache_key, &self.metrics).await;
+
+        match cache_result {
+            Ok(Some(_data)) => {
+                return Ok(true);
             }
+            Ok(None) => {}
             Err(e) => {
-                tracing::warn!("Failed to cache top pages for org {}: {}", org_id, e);
+                tracing::warn!("Cache get error for hourly stats: {}", e);
             }
         }
 
-        Ok(false) // Cache miss
-    }
-
-    /// Execute real-time statistics query (never cached)
-    /// Represents live dashboards and real-time monitoring queries
-    /// Always hits the database for the freshest data
-    async fn get_real_time_stats(&self, org_id: Uuid) -> Result<bool> {
-        // Real-time queries are never cached - always fresh data
         let db_start = Instant::now();
-        let _overview = self.database.get_analytics_overview(org_id, 1).await?; // Last hour only
-        self.metrics.record_db_query(db_start.elapsed().as_secs_f64());
+        let stats = self.database.get_analytics_overview(org_id, 1).await?;
+        let db_duration = db_start.elapsed().as_secs_f64();
+        self.metrics.record_db_operation("select", "success", db_duration);
 
-        Ok(false) // Never cached
+        if let Err(e) = self.cache.set(&cache_key, &stats, 180, &self.metrics).await {
+            tracing::warn!("Failed to set cache for hourly stats: {}", e);
+        }
+
+        Ok(false)
     }
 }
 
-/// CacheWarmupWorker maintains cache hit ratios by pre-loading popular queries
-/// Runs periodically to refresh expired cache entries and maintain performance
-/// Helps simulate realistic production cache behavior
+/// CacheWarmupWorker proactively refreshes cache on intervals
 pub struct CacheWarmupWorker {
     database: Arc<Database>,
     cache: Arc<RedisCache>,
@@ -335,7 +346,6 @@ pub struct CacheWarmupWorker {
 }
 
 impl CacheWarmupWorker {
-    /// Create a new cache warmup worker
     pub fn new(
         database: Arc<Database>,
         cache: Arc<RedisCache>,
@@ -348,62 +358,61 @@ impl CacheWarmupWorker {
         }
     }
 
-    /// Warm up cache with popular queries for all organizations
-    /// Called every minute to maintain target cache hit ratios
-    /// Pre-loads expensive queries that are frequently accessed
     pub async fn warmup_popular_queries(&self, organizations: u32) -> Result<()> {
         info!("Starting cache warmup");
 
         let org_ids = self.database.get_random_organization_ids(organizations).await?;
 
+        let mut refreshed_count = 0;
+
         for org_id in org_ids {
-            // Warmup analytics overview (most popular query)
-            let overview_key = format!("analytics:{}:overview:24h", org_id);
-            let cached = self.cache.get::<serde_json::Value>(&overview_key, &self.metrics).await;
+            // Refresh all three query types
+            for (key_suffix, hours, ttl) in [
+                ("overview:24h", 24, 300),
+                ("top_pages:24h", 24, 600),
+                ("hourly:1h", 1, 180),
+            ] {
+                let cache_key = format!("analytics:{}:{}", org_id, key_suffix);
 
-            match cached {
-                Ok(Some(_)) => {
-                }
-                Ok(None) => {
-                    // Cache miss - warmup with fresh data
-                    let db_start = Instant::now();
-                    let overview = self.database.get_analytics_overview(org_id, 24).await?;
-                    let db_duration = db_start.elapsed().as_secs_f64();
-                    self.metrics.record_db_operation("select", "success", db_duration);
+                let db_start = Instant::now();
+                match self.database.get_analytics_overview(org_id, hours).await {
+                    Ok(data) => {
+                        let db_duration = db_start.elapsed().as_secs_f64();
+                        self.metrics.record_db_operation("select", "success", db_duration);
 
-                    self.cache.set(&overview_key, &overview, 600, &self.metrics).await;
-                }
-                Err(_) => {
+                        if self.cache.set(&cache_key, &data, ttl, &self.metrics).await.is_ok() {
+                            refreshed_count += 1;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Warmup query failed for {}: {}", cache_key, e);
+                    }
                 }
             }
 
-            // Warmup top pages query (second most popular)
+            // Also warmup top pages specifically
             let pages_key = format!("analytics:{}:top_pages:24h", org_id);
-            let cached = self.cache.get::<Vec<serde_json::Value>>(&pages_key, &self.metrics).await;
-
-            match cached {
-                Ok(Some(_)) => {
-                }
-                Ok(None) => {
-                    // Cache miss - warmup with fresh data
-                    let db_start = Instant::now();
-                    let top_pages = self.database.get_top_pages(org_id, 10).await?;
+            let db_start = Instant::now();
+            match self.database.get_top_pages(org_id, 10).await {
+                Ok(pages) => {
                     let db_duration = db_start.elapsed().as_secs_f64();
                     self.metrics.record_db_operation("select", "success", db_duration);
 
-                    self.cache.set(&pages_key, &top_pages, 1200, &self.metrics).await;
+                    if self.cache.set(&pages_key, &pages, 600, &self.metrics).await.is_ok() {
+                        refreshed_count += 1;
+                    }
                 }
-                Err(_) => {
+                Err(e) => {
+                    tracing::warn!("Warmup top pages failed for org {}: {}", org_id, e);
                 }
             }
         }
 
-        info!("Cache warmup completed");
+        info!("Cache warmup completed: {} entries refreshed", refreshed_count);
         Ok(())
     }
 }
 
-// In workers.rs
 pub struct SystemMonitorWorker {
     database: Arc<Database>,
     metrics: Arc<AppMetrics>,
@@ -415,16 +424,13 @@ impl SystemMonitorWorker {
     }
 
     pub async fn update_system_metrics(&self, config: &Config) -> Result<()> {
-        // For SQLx, you'd need to track this differently since it doesn't expose active connections
-        // You could estimate based on your query load or use a fixed value for demo purposes
         let estimated_connections = std::cmp::min(
             (config.queries_per_second + config.events_per_second) / 10,
-            20 // max connections
+            20
         ) as i64;
 
         self.metrics.db_connections_active.set(estimated_connections);
 
-        // Update organizations count
         let org_count = self.database.get_random_organization_ids(1000).await?.len() as i64;
         self.metrics.active_organizations.set(org_count);
 

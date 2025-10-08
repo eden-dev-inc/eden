@@ -5,9 +5,8 @@
 // operations with proper TTL and invalidation strategies.
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
-use redis::{AsyncCommands, FromRedisValue};
-use serde_json::json;
+use chrono::{ Utc};
+use redis::{AsyncCommands};
 use sqlx::{PgPool, Row};
 use std::time::Duration;
 use tokio::time::Instant;
@@ -386,10 +385,12 @@ impl RedisCache {
 
         match conn.set_ex::<&str, String, ()>(key, json_str, ttl_seconds).await {
             Ok(_) => {
+                log::debug!("Successfully set to {}", key);
                 metrics.record_cache_operation("set", "success", start.elapsed().as_secs_f64());
                 Ok(())
             }
             Err(e) => {
+                log::warn!("Failed to set value: {}", e);
                 metrics.record_cache_operation("set", "error", start.elapsed().as_secs_f64());
                 Err(e.into())
             }
