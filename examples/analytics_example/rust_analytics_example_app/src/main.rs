@@ -139,8 +139,8 @@ async fn start_cache_warmup(state: AppState, config: Config) {
         if let Err(e) = worker.warmup_popular_queries(config.organizations).await {
             warn!("Cache warmup error: {}", e);
         }
-        // Warmup every 2 minutes to keep cache hot
-        sleep(Duration::from_secs(120)).await;
+        // Warmup every 60 seconds (more frequent to maintain high hit rate)
+        sleep(Duration::from_secs(60)).await;
     }
 }
 

@@ -275,8 +275,8 @@ impl QuerySimulatorWorker {
         let db_duration = db_start.elapsed().as_secs_f64();
         self.metrics.record_db_operation("select", "success", db_duration);
 
-        // Populate cache
-        if let Err(e) = self.cache.set(&cache_key, &overview, 300, &self.metrics).await {
+        // Populate cache with 15 minute TTL
+        if let Err(e) = self.cache.set(&cache_key, &overview, 900, &self.metrics).await {
             tracing::warn!("Failed to set cache for overview: {}", e);
         }
 
@@ -303,7 +303,8 @@ impl QuerySimulatorWorker {
         let db_duration = db_start.elapsed().as_secs_f64();
         self.metrics.record_db_operation("select", "success", db_duration);
 
-        if let Err(e) = self.cache.set(&cache_key, &top_pages, 600, &self.metrics).await {
+        // Populate cache with 20 minute TTL
+        if let Err(e) = self.cache.set(&cache_key, &top_pages, 1200, &self.metrics).await {
             tracing::warn!("Failed to set cache for top pages: {}", e);
         }
 
@@ -330,7 +331,8 @@ impl QuerySimulatorWorker {
         let db_duration = db_start.elapsed().as_secs_f64();
         self.metrics.record_db_operation("select", "success", db_duration);
 
-        if let Err(e) = self.cache.set(&cache_key, &stats, 180, &self.metrics).await {
+        // Populate cache with 10 minute TTL
+        if let Err(e) = self.cache.set(&cache_key, &stats, 600, &self.metrics).await {
             tracing::warn!("Failed to set cache for hourly stats: {}", e);
         }
 
@@ -366,11 +368,10 @@ impl CacheWarmupWorker {
         let mut refreshed_count = 0;
 
         for org_id in org_ids {
-            // Refresh all three query types
+            // Refresh all three query types with updated TTLs
             for (key_suffix, hours, ttl) in [
-                ("overview:24h", 24, 300),
-                ("top_pages:24h", 24, 600),
-                ("hourly:1h", 1, 180),
+                ("overview:24h", 24, 900),    // 15 minutes
+                ("hourly:1h", 1, 600),         // 10 minutes
             ] {
                 let cache_key = format!("analytics:{}:{}", org_id, key_suffix);
 
@@ -390,7 +391,7 @@ impl CacheWarmupWorker {
                 }
             }
 
-            // Also warmup top pages specifically
+            // Warmup top pages specifically with 20 minute TTL
             let pages_key = format!("analytics:{}:top_pages:24h", org_id);
             let db_start = Instant::now();
             match self.database.get_top_pages(org_id, 10).await {
@@ -398,7 +399,7 @@ impl CacheWarmupWorker {
                     let db_duration = db_start.elapsed().as_secs_f64();
                     self.metrics.record_db_operation("select", "success", db_duration);
 
-                    if self.cache.set(&pages_key, &pages, 600, &self.metrics).await.is_ok() {
+                    if self.cache.set(&pages_key, &pages, 1200, &self.metrics).await.is_ok() {
                         refreshed_count += 1;
                     }
                 }
