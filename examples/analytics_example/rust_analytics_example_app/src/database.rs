@@ -5,20 +5,20 @@
 // operations with proper TTL and invalidation strategies.
 
 use anyhow::Result;
-use chrono::{ Utc};
-use redis::{AsyncCommands};
+use chrono::Utc;
+use redis::{AsyncCommands, ProtocolVersion};
 use sqlx::{PgPool, Row};
 use std::time::Duration;
 use tokio::time::Instant;
-use tracing::{info, log};
+use tracing::{error, info, log};
 use uuid::Uuid;
 
+use crate::metrics::AppMetrics;
 use crate::{
     config::Config,
     generators::DataGenerator,
     models::{AnalyticsOverview, Event, Organization, TopPage, User},
 };
-use crate::metrics::AppMetrics;
 
 /// Database provides all PostgreSQL operations with connection pooling
 /// Handles schema setup, data seeding, event insertion, and analytics queries
@@ -31,7 +31,7 @@ impl Database {
     /// The connection pool is configured for high concurrency workloads
     pub async fn new(database_url: &str) -> Result<Self> {
         let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(50)  // Increase for high throughput
+            .max_connections(50) // Increase for high throughput
             .min_connections(10)
             .acquire_timeout(Duration::from_secs(3))
             .idle_timeout(Duration::from_secs(600))
@@ -62,8 +62,8 @@ impl Database {
         );
         "#,
         )
-            .execute(&self.pool)
-            .await?;
+        .execute(&self.pool)
+        .await?;
 
         // 3. Create users table
         sqlx::query(
@@ -77,8 +77,8 @@ impl Database {
         );
         "#,
         )
-            .execute(&self.pool)
-            .await?;
+        .execute(&self.pool)
+        .await?;
 
         // 4. Create events table
         sqlx::query(
@@ -97,21 +97,25 @@ impl Database {
         );
         "#,
         )
-            .execute(&self.pool)
-            .await?;
+        .execute(&self.pool)
+        .await?;
 
         // 5. Create indexes separately
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_events_org_created ON events(organization_id, created_at);")
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_events_type_created ON events(event_type, created_at);")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_events_type_created ON events(event_type, created_at);",
+        )
+        .execute(&self.pool)
+        .await?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_events_user_created ON events(user_id, created_at);")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_events_user_created ON events(user_id, created_at);",
+        )
+        .execute(&self.pool)
+        .await?;
 
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_users_org ON users(organization_id);")
             .execute(&self.pool)
@@ -123,14 +127,21 @@ impl Database {
 
     /// Seed the database with initial organizations and users
     /// Creates realistic test data for the specified number of orgs and users per org
-    pub async fn seed_initial_data(&self, generator: &DataGenerator, config: &Config) -> Result<()> {
+    pub async fn seed_initial_data(
+        &self,
+        generator: &DataGenerator,
+        config: &Config,
+    ) -> Result<()> {
         // Check if we already have data
         let existing_orgs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM organizations")
             .fetch_one(&self.pool)
             .await?;
 
         if existing_orgs > 0 {
-            info!("Database already contains {} organizations, skipping initial data seeding", existing_orgs);
+            info!(
+                "Database already contains {} organizations, skipping initial data seeding",
+                existing_orgs
+            );
             return Ok(());
         }
 
@@ -149,7 +160,12 @@ impl Database {
             // Generate users for this organization
             let users = generator.generate_users(org.id, config.users_per_org as usize);
 
-            info!("Inserting {} users for organization {} ({})", users.len(), org_index + 1, org.name);
+            info!(
+                "Inserting {} users for organization {} ({})",
+                users.len(),
+                org_index + 1,
+                org.name
+            );
 
             // Insert users with better error handling
             for (user_index, user) in users.iter().enumerate() {
@@ -231,7 +247,11 @@ impl Database {
 
     /// Get analytics overview for an organization over a time period
     /// This is an expensive query that's frequently cached
-    pub async fn get_analytics_overview(&self, org_id: Uuid, hours: i32) -> Result<AnalyticsOverview> {
+    pub async fn get_analytics_overview(
+        &self,
+        org_id: Uuid,
+        hours: i32,
+    ) -> Result<AnalyticsOverview> {
         let row = sqlx::query(
             r#"
             SELECT
@@ -244,10 +264,10 @@ impl Database {
             AND created_at >= NOW() - INTERVAL '1 hour' * $2
             "#,
         )
-            .bind(&org_id)
-            .bind(hours)
-            .fetch_one(&self.pool)
-            .await?;
+        .bind(&org_id)
+        .bind(hours)
+        .fetch_one(&self.pool)
+        .await?;
 
         let total_events: i64 = row.get("total_events");
         let unique_users: i64 = row.get("unique_users");
@@ -290,10 +310,10 @@ impl Database {
             LIMIT $2
             "#,
         )
-            .bind(&org_id)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await?;
+        .bind(&org_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
 
         let mut top_pages = Vec::new();
         for row in rows {
@@ -321,11 +341,13 @@ impl Database {
     /// Get random user IDs from a specific organization
     /// Used for event generation to simulate realistic user activity
     pub async fn get_random_user_ids(&self, org_id: Uuid, limit: u32) -> Result<Vec<Uuid>> {
-        let rows = sqlx::query("SELECT id FROM users WHERE organization_id = $1 ORDER BY RANDOM() LIMIT $2")
-            .bind(&org_id)
-            .bind(limit as i32)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT id FROM users WHERE organization_id = $1 ORDER BY RANDOM() LIMIT $2",
+        )
+        .bind(&org_id)
+        .bind(limit as i32)
+        .fetch_all(&self.pool)
+        .await?;
 
         Ok(rows.into_iter().map(|row| row.get("id")).collect())
     }
@@ -341,11 +363,16 @@ impl RedisCache {
     /// Create a new Redis connection and test connectivity
     pub async fn new(redis_url: &str) -> Result<Self> {
         let client = redis::Client::open(redis_url)?;
+        // assert_eq!(
+        //     client.get_connection_info().protocol,
+        //     ProtocolVersion::RESP3
+        // );
 
         // Test connection on startup - use cmd instead of ping method
-        let mut conn = client.get_tokio_connection().await?;
+        let mut conn = client.get_multiplexed_async_connection().await?;
         let _: String = redis::cmd("PING").query_async(&mut conn).await?;
 
+        // .query_async(&mut conn).await?;
         info!("Redis connection established");
         Ok(Self { client })
     }
@@ -355,7 +382,7 @@ impl RedisCache {
         T: serde::de::DeserializeOwned,
     {
         let start = Instant::now();
-        let mut conn = self.client.get_tokio_connection().await?;
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
 
         match conn.get::<&str, Option<String>>(key).await {
             Ok(value) => {
@@ -364,26 +391,42 @@ impl RedisCache {
                 metrics.record_cache_operation("get", result, duration);
 
                 match value {
-                    Some(json_str) => Ok(Some(serde_json::from_str(&json_str)?)),
+                    Some(json_str) => match serde_json::from_str(&json_str) {
+                        Ok(v) => Ok(Some(v)),
+                        Err(e) => {
+                            error!("Can't parse JSON string: {json_str}");
+                            Err(e.into())
+                        }
+                    },
                     None => Ok(None),
                 }
             }
             Err(e) => {
+                error!("RedisError in GET {key}: {e}");
                 metrics.record_cache_operation("get", "error", start.elapsed().as_secs_f64());
                 Err(e.into())
             }
         }
     }
 
-    pub async fn set<T>(&self, key: &str, value: &T, ttl_seconds: u64, metrics: &AppMetrics) -> Result<()>
+    pub async fn set<T>(
+        &self,
+        key: &str,
+        value: &T,
+        ttl_seconds: u64,
+        metrics: &AppMetrics,
+    ) -> Result<()>
     where
         T: serde::Serialize,
     {
         let start = Instant::now();
-        let mut conn = self.client.get_tokio_connection().await?;
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
         let json_str = serde_json::to_string(value)?;
 
-        match conn.set_ex::<&str, String, ()>(key, json_str, ttl_seconds).await {
+        match conn
+            .set_ex::<&str, String, ()>(key, json_str, ttl_seconds)
+            .await
+        {
             Ok(_) => {
                 log::debug!("Successfully set to {}", key);
                 metrics.record_cache_operation("set", "success", start.elapsed().as_secs_f64());
@@ -399,7 +442,7 @@ impl RedisCache {
 
     pub async fn del(&self, key: &str, metrics: &AppMetrics) -> Result<()> {
         let start = Instant::now();
-        let mut conn = self.client.get_tokio_connection().await?;
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
 
         match conn.del::<&str, i32>(key).await {
             Ok(_) => {
@@ -415,28 +458,44 @@ impl RedisCache {
 
     pub async fn invalidate_pattern(&self, pattern: &str, metrics: &AppMetrics) -> Result<()> {
         let start = Instant::now();
-        let mut conn = self.client.get_tokio_connection().await?;
+        let mut conn = self.client.get_multiplexed_async_connection().await?;
 
         match conn.keys::<&str, Vec<String>>(pattern).await {
             Ok(keys) => {
                 if !keys.is_empty() {
                     match conn.del::<Vec<String>, i32>(keys).await {
                         Ok(_) => {
-                            metrics.record_cache_operation("invalidate", "success", start.elapsed().as_secs_f64());
+                            metrics.record_cache_operation(
+                                "invalidate",
+                                "success",
+                                start.elapsed().as_secs_f64(),
+                            );
                             Ok(())
                         }
                         Err(e) => {
-                            metrics.record_cache_operation("invalidate", "error", start.elapsed().as_secs_f64());
+                            metrics.record_cache_operation(
+                                "invalidate",
+                                "error",
+                                start.elapsed().as_secs_f64(),
+                            );
                             Err(e.into())
                         }
                     }
                 } else {
-                    metrics.record_cache_operation("invalidate", "success", start.elapsed().as_secs_f64());
+                    metrics.record_cache_operation(
+                        "invalidate",
+                        "success",
+                        start.elapsed().as_secs_f64(),
+                    );
                     Ok(())
                 }
             }
             Err(e) => {
-                metrics.record_cache_operation("invalidate", "error", start.elapsed().as_secs_f64());
+                metrics.record_cache_operation(
+                    "invalidate",
+                    "error",
+                    start.elapsed().as_secs_f64(),
+                );
                 Err(e.into())
             }
         }
