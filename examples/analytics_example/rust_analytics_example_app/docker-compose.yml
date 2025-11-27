@@ -21,7 +21,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6377:6379"
+      - "6370:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -38,20 +38,9 @@ services:
       dockerfile: Dockerfile
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/analytics
-      # - REDIS_URL=redis://redis:6379
-      # this should be the same Redis as redis:6379
-      # - REDIS_URL=redis://host.docker.internal:6377
-      # this should be Redis through Eden Interlay
-      # - REDIS_URL=redis://host.docker.internal:6300
-      # - REDIS_URL=redis://host.docker.internal:6366
-      - REDIS_URL=redis://host.docker.internal:6378
+      - REDIS_URL=redis://host.docker.internal:6366
       - BIND_ADDRESS=0.0.0.0:3000
-      - EVENTS_PER_SECOND=${EVENTS_PER_SECOND:-100}
-      - QUERIES_PER_SECOND=${QUERIES_PER_SECOND:-200}
-      - ORGANIZATIONS=${ORGANIZATIONS:-50}
-      - USERS_PER_ORG=${USERS_PER_ORG:-1000}
-      - CACHE_HIT_TARGET=${CACHE_HIT_TARGET:-85}
-      - READ_WRITE_RATIO=${READ_WRITE_RATIO:-80}
+      - MAX_WORKERS=${MAX_WORKERS:-8}
       - RUST_LOG=analytics_demo=info,sqlx=warn
     ports:
       - "3000:3000"

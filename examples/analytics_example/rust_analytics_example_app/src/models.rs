@@ -1,8 +1,7 @@
 // Data Models and Types
 //
-// This module defines all the data structures used throughout the application.
-// These models represent a realistic analytics platform with multi-tenant
-// organizations, users, events, and aggregated analytics data.
+// Enhanced models with granular structures for time-series, user-level,
+// and page-level analytics to support 10K+ cache keys.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -10,7 +9,6 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 /// Organization represents a tenant company in the analytics platform
-/// Each organization has its own isolated data and analytics
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Organization {
     pub id: Uuid,
@@ -19,7 +17,6 @@ pub struct Organization {
 }
 
 /// User represents an individual within an organization
-/// Users generate events that drive the analytics
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize, FromRow)]
 pub struct User {
     pub id: Uuid,
@@ -30,23 +27,16 @@ pub struct User {
 }
 
 /// EventType enum represents different types of user activities
-/// Distribution: 60% PageView, 28% Click, 10% Conversion, 1.5% SignUp, 0.5% Purchase
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EventType {
-    /// User navigating to a page or screen
     PageView,
-    /// User clicking buttons, links, or UI elements
     Click,
-    /// User completing a desired action (goal achievement)
     Conversion,
-    /// New user registration or account creation
     SignUp,
-    /// User making a purchase or payment
     Purchase,
 }
 
 impl EventType {
-    /// Convert enum to database string representation
     pub fn as_str(&self) -> &'static str {
         match self {
             EventType::PageView => "page_view",
@@ -57,7 +47,6 @@ impl EventType {
         }
     }
 
-    /// Parse database string back to enum
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "page_view" => Some(EventType::PageView),
@@ -71,29 +60,21 @@ impl EventType {
 }
 
 /// Event represents a single user activity record
-/// Contains contextual information like page URLs, referrers, and custom properties
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Event {
     pub id: Uuid,
     pub organization_id: Uuid,
-    /// Optional user ID (anonymous events have None)
     pub user_id: Option<Uuid>,
     pub event_type: String,
-    /// Page or screen where event occurred
     pub page_url: Option<String>,
-    /// Traffic source or previous page
     pub referrer: Option<String>,
-    /// Browser user agent string
     pub user_agent: Option<String>,
-    /// Client IP address for geolocation
     pub ip_address: Option<String>,
-    /// Event-specific metadata as JSON
     pub properties: serde_json::Value,
     pub created_at: DateTime<Utc>,
 }
 
 /// AnalyticsOverview provides high-level metrics for dashboard display
-/// This is frequently cached in Redis due to expensive aggregation queries
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalyticsOverview {
     pub organization_id: Uuid,
@@ -106,7 +87,6 @@ pub struct AnalyticsOverview {
 }
 
 /// TopPage represents popular pages or screens by traffic volume
-/// Used for content performance analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TopPage {
     pub url: String,
@@ -115,10 +95,129 @@ pub struct TopPage {
 }
 
 /// FunnelStep represents a step in a conversion funnel analysis
-/// Shows user drop-off rates through multi-step processes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunnelStep {
     pub step_name: String,
     pub users: i64,
     pub conversion_rate: f64,
+}
+
+/// HourlyMetrics tracks time-series analytics per hour
+/// Used for granular time-based caching (creates many cache keys)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HourlyMetrics {
+    pub organization_id: Uuid,
+    pub hour: DateTime<Utc>,
+    pub events: i64,
+    pub unique_users: i64,
+    pub page_views: i64,
+    pub clicks: i64,
+    pub conversions: i64,
+    pub signups: i64,
+    pub purchases: i64,
+    pub revenue: f64,
+}
+
+/// DailyMetrics aggregates metrics per day
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyMetrics {
+    pub organization_id: Uuid,
+    pub date: DateTime<Utc>,
+    pub events: i64,
+    pub unique_users: i64,
+    pub page_views: i64,
+    pub conversions: i64,
+    pub conversion_rate: f64,
+    pub revenue: f64,
+}
+
+/// UserActivity summarizes a specific user's behavior
+/// Enables per-user caching for user profile queries
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserActivity {
+    pub user_id: Uuid,
+    pub organization_id: Uuid,
+    pub total_events: i64,
+    pub last_seen: DateTime<Utc>,
+    pub page_views: i64,
+    pub clicks: i64,
+    pub conversions: i64,
+    pub lifetime_value: f64,
+}
+
+/// PagePerformance tracks individual page/URL metrics
+/// Creates cache entries per page per organization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PagePerformance {
+    pub organization_id: Uuid,
+    pub page_url: String,
+    pub views: i64,
+    pub unique_visitors: i64,
+    pub avg_time_on_page: f64,
+    pub bounce_rate: f64,
+    pub conversions: i64,
+}
+
+/// EventTypeDistribution shows breakdown of event types
+/// Cached per org for quick dashboard loading
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventTypeDistribution {
+    pub organization_id: Uuid,
+    pub page_views: i64,
+    pub clicks: i64,
+    pub conversions: i64,
+    pub signups: i64,
+    pub purchases: i64,
+    pub total: i64,
+}
+
+/// ReferrerStats tracks traffic source performance
+/// Cached per org and per time period
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReferrerStats {
+    pub referrer: String,
+    pub visits: i64,
+    pub unique_visitors: i64,
+    pub conversions: i64,
+    pub conversion_rate: f64,
+}
+
+/// CohortAnalysis tracks user behavior by signup cohort
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CohortAnalysis {
+    pub organization_id: Uuid,
+    pub cohort_period: String,
+    pub users: i64,
+    pub retention_rate: f64,
+    pub avg_events_per_user: f64,
+}
+
+/// RealtimeCounter for live dashboard updates
+/// Incremented atomically in Redis using INCR
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RealtimeCounter {
+    pub organization_id: Uuid,
+    pub current_active_users: i64,
+    pub events_last_minute: i64,
+    pub events_last_hour: i64,
+}
+
+/// DeviceBrowserStats tracks user agent analytics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceBrowserStats {
+    pub organization_id: Uuid,
+    pub device_type: String,
+    pub browser: String,
+    pub count: i64,
+    pub percentage: f64,
+}
+
+/// GeographicDistribution tracks user location analytics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeographicDistribution {
+    pub organization_id: Uuid,
+    pub country_code: String,
+    pub city: String,
+    pub users: i64,
+    pub events: i64,
 }

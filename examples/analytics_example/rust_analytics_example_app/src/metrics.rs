@@ -1,13 +1,10 @@
 // Prometheus Metrics Collection
 //
-// This module defines and manages all Prometheus metrics for monitoring
-// the analytics demo. It tracks performance, business metrics, and
-// infrastructure health to demonstrate migration impact.
+// Enhanced metrics for monitoring 10K+ QPS analytics demo with diverse query types
 
 use prometheus::{CounterVec, Histogram, HistogramOpts, HistogramVec, IntCounter, IntGauge, Opts, Registry};
 
-/// AppMetrics contains all Prometheus metrics for the application
-/// Organized by category: events, queries, database, cache, and business metrics
+/// AppMetrics contains all Prometheus metrics for high-performance monitoring
 pub struct AppMetrics {
     pub registry: Registry,
 
@@ -48,20 +45,17 @@ pub struct AppMetrics {
 
 impl AppMetrics {
     /// Create a new metrics registry with all application metrics
-    /// Each metric is registered with Prometheus for collection
     pub fn new() -> Self {
         let registry = Registry::new();
 
-        // Event generation metrics
         let events_generated_total = IntCounter::new(
             "events_generated_total",
             "Total number of events generated"
         ).unwrap();
 
-        // Create a CounterVec with labels instead of a simple Counter
         let events_by_type = CounterVec::new(
             Opts::new("events_by_type_total", "Total events by type"),
-            &["event_type"] // Label names
+            &["event_type"]
         ).unwrap();
 
         let event_generation_duration = Histogram::with_opts(
@@ -71,7 +65,6 @@ impl AppMetrics {
             )
         ).unwrap();
 
-        // Query execution metrics
         let queries_executed_total = IntCounter::new(
             "queries_executed_total",
             "Total number of queries executed"
@@ -106,15 +99,14 @@ impl AppMetrics {
 
         let cache_operation_duration = HistogramVec::new(
             HistogramOpts::new("cache_operation_duration_seconds", "Cache operation latency"),
-            &["operation", "result"] // get/set/del, hit/miss/error
+            &["operation", "result"]
         ).unwrap();
 
         let db_operation_duration = HistogramVec::new(
             HistogramOpts::new("db_operation_duration_seconds", "Database operation latency"),
-            &["query_type", "result"] // select/insert/update, success/error
+            &["query_type", "result"]
         ).unwrap();
 
-        // Database metrics
         let db_connections_active = IntGauge::new(
             "db_connections_active",
             "Number of active database connections"
@@ -132,7 +124,6 @@ impl AppMetrics {
             "Total number of database queries"
         ).unwrap();
 
-        // Redis metrics
         let redis_operations_total = IntCounter::new(
             "redis_operations_total",
             "Total number of Redis operations"
@@ -150,7 +141,6 @@ impl AppMetrics {
             "Current cache size in bytes"
         ).unwrap();
 
-        // Business metrics
         let active_organizations = IntGauge::new(
             "active_organizations",
             "Number of active organizations"
@@ -166,7 +156,7 @@ impl AppMetrics {
             "Current conversion rate percentage"
         ).unwrap();
 
-        // Register all metrics with Prometheus
+        // Register all metrics
         registry.register(Box::new(events_generated_total.clone())).unwrap();
         registry.register(Box::new(events_by_type.clone())).unwrap();
         registry.register(Box::new(event_generation_duration.clone())).unwrap();
@@ -213,15 +203,11 @@ impl AppMetrics {
         }
     }
 
-    /// Record a generated event with type label
-    /// Increments both total counter and per-type counter
     pub fn record_event_generated(&self, event_type: &str) {
         self.events_generated_total.inc();
         self.events_by_type.with_label_values(&[event_type]).inc();
     }
 
-    /// Record query execution with duration and cache hit status
-    /// Tracks both performance and cache efficiency
     pub fn record_query_executed(&self, duration: f64, cache_hit: bool) {
         self.queries_executed_total.inc();
         self.query_duration.observe(duration);
@@ -233,22 +219,16 @@ impl AppMetrics {
         }
     }
 
-    /// Record database query execution time
-    /// Used to monitor database performance during migrations
     pub fn record_db_query(&self, duration: f64) {
         self.db_queries_total.inc();
         self.db_query_duration.observe(duration);
     }
 
-    /// Record Redis operation execution time
-    /// Monitors cache performance and latency
     pub fn record_redis_operation(&self, duration: f64) {
         self.redis_operations_total.inc();
         self.redis_operation_duration.observe(duration);
     }
 
-    /// Update high-level business metrics
-    /// Called periodically to maintain current operational state
     pub fn update_business_metrics(&self, active_orgs: i64, eps: i64, conversion_rate: f64) {
         self.active_organizations.set(active_orgs);
         self.events_per_second.set(eps);
