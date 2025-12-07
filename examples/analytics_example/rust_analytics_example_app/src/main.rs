@@ -1,7 +1,8 @@
-// Analytics Demo - High-Performance Database Migration Showcase
+// Analytics Demo - High-Performance Redis Migration Showcase
 //
-// Enhanced for 10K+ QPS with diverse cache keys, Redis pooling, and no worker limits
-// FIXED: Uses OrgIdCache for efficient org_id lookups, proper error logging
+// Re-architected for Redis-only hot path demonstration.
+// Postgres is optional and only used if explicitly enabled for seeding.
+// All runtime traffic goes through Redis only.
 
 use anyhow::Result;
 use axum::{extract::State, http::StatusCode, response::Response, routing::get, Router};
@@ -19,18 +20,21 @@ mod models;
 mod workers;
 
 use config::Config;
-use database::{Database, RedisCache};
+use database::RedisCache;
 use generators::DataGenerator;
 use metrics::AppMetrics;
-use workers::{EventGeneratorWorker, QuerySimulatorWorker, CacheWarmupWorker, SystemMonitorWorker, OrgIdCache};
+use workers::{
+    QuerySimulatorWorker, CacheWarmupWorker, EventSimulatorWorker,
+    SystemMonitorWorker, OrgIdCache
+};
 
 #[derive(Clone)]
 struct AppState {
-    database: Arc<Database>,
     cache: Arc<RedisCache>,
     metrics: Arc<AppMetrics>,
     generator: Arc<DataGenerator>,
     org_cache: Arc<OrgIdCache>,
+    config: Arc<Config>,
 }
 
 #[tokio::main]
@@ -40,69 +44,60 @@ async fn main() -> Result<()> {
         .init();
 
     let config = Config::parse();
-    info!("Starting high-performance analytics demo");
+    info!("Starting Redis-only analytics demo");
     info!("Configuration:");
     info!("  - Target QPS: {}", config.queries_per_second);
     info!("  - Events/sec: {}", config.events_per_second);
     info!("  - Organizations: {}", config.organizations);
     info!("  - Max workers: {}", config.max_workers);
-    info!("  - DB pool size: {}", config.db_pool_size);
     info!("  - Redis pool size: {}", config.redis_pool_size);
+    info!("  - Mode: Redis-only (no Postgres in hot path)");
 
-    let database = Arc::new(Database::new(&config.database_url, config.db_pool_size).await?);
+    // Initialize Redis cache
     let cache = Arc::new(RedisCache::new(&config.redis_url, config.redis_pool_size).await?);
     let metrics = Arc::new(AppMetrics::new());
     let generator = Arc::new(DataGenerator::new());
     let org_cache = Arc::new(OrgIdCache::new());
 
-    database.setup_schema().await?;
-    database.seed_initial_data(&generator, &config).await?;
-
-    // Initial cache population
-    info!("Populating organization ID cache...");
-    if let Err(e) = org_cache.refresh(&database, config.organizations).await {
-        error!("Failed to populate org cache: {}", e);
-        return Err(e);
-    }
-    info!("Organization ID cache populated with {} orgs", org_cache.get_org_ids().await.len());
+    // Initialize synthetic org/user data (no DB needed)
+    info!("Initializing synthetic organization data...");
+    org_cache.initialize_synthetic(config.organizations, config.users_per_org).await;
 
     let state = AppState {
-        database: database.clone(),
         cache: cache.clone(),
         metrics: metrics.clone(),
         generator: generator.clone(),
         org_cache: org_cache.clone(),
+        config: Arc::new(config.clone()),
     };
 
-    // Start org cache refresh task
-    tokio::spawn(start_org_cache_refresh(state.clone(), config.clone()));
+    // Start cache warmup (populates Redis with synthetic data)
+    tokio::spawn(start_cache_warmup(state.clone()));
 
-    // Start event generator
-    tokio::spawn(start_event_generator(state.clone(), config.clone()));
+    // Start event simulator (Redis INCR operations only)
+    tokio::spawn(start_event_simulator(state.clone()));
 
-    // Start query simulator with enhanced worker pool
-    tokio::spawn(start_query_simulator(state.clone(), config.clone()));
-
-    // Start cache warmup
-    tokio::spawn(start_cache_warmup(state.clone(), config.clone()));
+    // Start query simulator (Redis GET/SET only)
+    tokio::spawn(start_query_simulator(state.clone()));
 
     // Start system monitor
-    tokio::spawn(start_system_monitor(state.clone(), config.clone()));
+    tokio::spawn(start_system_monitor(state.clone()));
 
     let app = Router::new()
         .route("/metrics", get(metrics_handler))
         .route("/health", get(health_handler))
-        .with_state(state);
+        .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&config.bind_address).await?;
 
     info!("===========================================");
-    info!("Analytics Demo Ready");
+    info!("Analytics Demo Ready (Redis-Only Mode)");
     info!("===========================================");
     info!("Metrics endpoint: http://{}/metrics", config.bind_address);
     info!("Health endpoint: http://{}/health", config.bind_address);
     info!("Target throughput: {} QPS", config.queries_per_second);
-    info!("Expected cache hit ratio: ~{}%", config.cache_hit_target);
+    info!("Simulated events: {}/sec", config.events_per_second);
+    info!("Organizations: {}", config.organizations);
     info!("===========================================");
 
     axum::serve(listener, app).await?;
@@ -129,47 +124,65 @@ async fn health_handler() -> &'static str {
     "OK"
 }
 
-async fn start_org_cache_refresh(state: AppState, config: Config) {
-    // Refresh org cache every 30 seconds
-    loop {
-        sleep(Duration::from_secs(30)).await;
-        if let Err(e) = state.org_cache.refresh(&state.database, config.organizations).await {
-            error!("Failed to refresh org cache: {}", e);
-        }
-    }
-}
-
-async fn start_event_generator(state: AppState, config: Config) {
-    let worker = EventGeneratorWorker::new(
-        state.database,
+async fn start_cache_warmup(state: AppState) {
+    let worker = CacheWarmupWorker::new(
         state.cache,
         state.metrics,
         state.generator,
         state.org_cache,
     );
 
+    // Initial bulk population
+    sleep(Duration::from_secs(1)).await;
+    info!("Starting initial cache population...");
+    if let Err(e) = worker.bulk_populate().await {
+        error!("Bulk cache population error: {}", e);
+    }
+
+    // Periodic refresh (much less frequent since no DB)
     loop {
-        if let Err(e) = worker.run_batch(config.events_per_second, config.organizations).await {
-            error!("Event generator error: {}", e);
+        sleep(Duration::from_secs(state.config.warmup_interval)).await;
+        if let Err(e) = worker.warmup_refresh().await {
+            error!("Cache warmup error: {}", e);
+        }
+    }
+}
+
+async fn start_event_simulator(state: AppState) {
+    let worker = EventSimulatorWorker::new(
+        state.cache,
+        state.metrics,
+        state.generator,
+        state.org_cache,
+    );
+
+    // Wait for cache warmup
+    sleep(Duration::from_secs(3)).await;
+
+    loop {
+        if let Err(e) = worker.run_batch(state.config.events_per_second).await {
+            error!("Event simulator error: {}", e);
         }
         sleep(Duration::from_secs(1)).await;
     }
 }
 
-async fn start_query_simulator(state: AppState, config: Config) {
+async fn start_query_simulator(state: AppState) {
     let worker = QuerySimulatorWorker::new(
-        state.database,
         state.cache,
         state.metrics,
         state.generator.clone(),
         state.org_cache,
     );
 
-    // Start worker pool with no upper limit
+    // Wait for cache warmup
+    sleep(Duration::from_secs(3)).await;
+
+    // Start worker pool
     worker.start_worker_pool(
-        config.queries_per_second,
-        config.organizations,
-        config.max_workers,
+        state.config.queries_per_second,
+        state.config.organizations,
+        state.config.max_workers,
     ).await;
 
     // Keep task alive
@@ -178,37 +191,11 @@ async fn start_query_simulator(state: AppState, config: Config) {
     }
 }
 
-async fn start_cache_warmup(state: AppState, config: Config) {
-    let worker = CacheWarmupWorker::new(
-        state.database,
-        state.cache,
-        state.metrics,
-        state.generator,
-        state.org_cache,
-    );
-
-    // Initial bulk population after 2 seconds
-    sleep(Duration::from_secs(2)).await;
-
-    info!("Starting initial bulk cache population...");
-    if let Err(e) = worker.bulk_populate().await {
-        error!("Bulk cache population error: {}", e);
-    }
-
-    // Then periodic refresh
-    loop {
-        sleep(Duration::from_secs(config.warmup_interval)).await;
-        if let Err(e) = worker.warmup_popular_queries(config.organizations).await {
-            error!("Cache warmup error: {}", e);
-        }
-    }
-}
-
-async fn start_system_monitor(state: AppState, config: Config) {
-    let worker = SystemMonitorWorker::new(state.database, state.metrics, state.org_cache);
+async fn start_system_monitor(state: AppState) {
+    let worker = SystemMonitorWorker::new(state.metrics, state.org_cache);
 
     loop {
-        if let Err(e) = worker.update_system_metrics(&config).await {
+        if let Err(e) = worker.update_system_metrics(&state.config).await {
             error!("System monitor error: {}", e);
         }
         sleep(Duration::from_secs(10)).await;
