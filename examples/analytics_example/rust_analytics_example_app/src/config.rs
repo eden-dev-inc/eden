@@ -27,11 +27,11 @@ pub struct Config {
     pub queries_per_second: u64,
 
     /// Number of tenant organizations to simulate
-    #[clap(long, env = "ORGANIZATIONS", default_value = "100")]
+    #[clap(long, env = "ORGANIZATIONS", default_value = "500")]
     pub organizations: u32,
 
     /// Number of users per organization for realistic data distribution
-    #[clap(long, env = "USERS_PER_ORG", default_value = "100")]
+    #[clap(long, env = "USERS_PER_ORG", default_value = "1000")]
     pub users_per_org: u32,
 
     /// Target cache hit ratio as a percentage (0-100)
