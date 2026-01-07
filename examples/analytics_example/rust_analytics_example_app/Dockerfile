@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy manifests
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 
 # Create dummy source and build dependencies
 RUN mkdir src && echo "fn main() {}" > src/main.rs
@@ -32,7 +32,7 @@ RUN apt-get update && apt-get install -y \
 # Copy dependency artifacts from previous stage
 COPY --from=dependencies /usr/src/app/target target
 COPY --from=dependencies /usr/local/cargo /usr/local/cargo
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 
 # Copy source code
 COPY src ./src
