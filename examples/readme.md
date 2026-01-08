@@ -46,18 +46,34 @@ cargo build --release
 
 ### [redis-observer](./redis-observer/)
 
-A terminal dashboard for monitoring multiple Redis instances in real-time, built with Rust.
+A terminal dashboard for monitoring multiple Redis instances in real-time with integrated migration support, built with Rust.
 
 **Features:**
-- Monitor key counts, ops/sec, and connected clients across multiple Redis instances
+- Monitor key counts, ops/sec, and connected clients across Redis instances
 - Visual coverage analysis comparing key distribution between databases
 - Live charts showing historical trends for keys and operations
 - Automatic coverage checks every 15 seconds
+- **Migration support**: Configure and trigger Redis migrations via Eden API
+- Auto-setup of migration infrastructure (endpoints, interlays, migrations)
 
 **Usage:**
 ```bash
 cd redis-observer
-cargo run -- <port1> <port2> [port3]
+cargo run -- <source> <dest> [api_endpoint]
+```
+
+**Arguments:**
+| Argument | Description |
+|----------|-------------|
+| `source` | Source Redis as `host:port` or just `port` (default host: `172.24.2.218`) |
+| `dest` | Destination Redis as `host:port` or just `port` (default host: `172.24.2.218`) |
+| `api_endpoint` | Eden API endpoint (default: `http://localhost:8000`) |
+
+**Examples:**
+```bash
+cargo run -- 6379 6380                           # Both use default host
+cargo run -- 192.168.1.10:6379 192.168.1.20:6380 # Different hosts
+cargo run -- 6379 10.0.0.5:6380                  # Mixed
 ```
 
 **Controls:**
@@ -66,6 +82,9 @@ cargo run -- <port1> <port2> [port3]
 | `q` | Quit |
 | `c` | Force coverage check |
 | `v` | Toggle ops/sec chart |
+| `s` | Start migration setup (connect to Eden API) |
+| `m` | Trigger migration |
+| `r` | Refresh migration status |
 
 ## Getting Started
 
