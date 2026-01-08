@@ -1099,35 +1099,7 @@ async fn trigger_migration_task(
             let _ = tx
                 .send(ApiEvent::MigrationStatusUpdate(MigrationStatus::InProgress))
                 .await;
-
-            // Poll for completion - check every 500ms for up to 60 seconds
-            for _ in 0..120 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-                match client.refresh_migration(&migration_id).await {
-                    Ok(data) => {
-                        let status = match data.state.as_deref() {
-                            Some("Pending") | None => MigrationStatus::Pending,
-                            Some("InProgress") | Some("In Progress") => MigrationStatus::InProgress,
-                            Some("Completed") | Some("Complete") => MigrationStatus::Completed,
-                            Some("Failed") => MigrationStatus::Failed("Migration failed".to_string()),
-                            Some(other) => MigrationStatus::Failed(format!("Unknown state: {}", other)),
-                        };
-
-                        let _ = tx.send(ApiEvent::MigrationStatusUpdate(status.clone())).await;
-
-                        // Stop polling if migration is complete or failed
-                        match status {
-                            MigrationStatus::Completed | MigrationStatus::Failed(_) => break,
-                            _ => continue,
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx.send(ApiEvent::MigrationError(e)).await;
-                        break;
-                    }
-                }
-            }
+            // Use 'r' to manually refresh status
         }
         Err(e) => {
             let _ = tx.send(ApiEvent::MigrationError(e)).await;
