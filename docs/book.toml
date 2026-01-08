@@ -1,0 +1,43 @@
+[book]
+title = "Eden Documentation"
+description = "Complete guide to using Eden Multiple Database Management System"
+authors = ["Eden Dev Team"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = true
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/eden-dev-inc/eden"
+edit-url-template = "https://github.com/eden-dev-inc/eden/edit/main/docs/{path}"
+site-url = "/eden/"
+
+[output.html.fold]
+enable = true
+level = 0
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+use-boolean-and = true
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+expand = true
+heading-split-level = 3
+
+[output.html.playground]
+editable = true
+copyable = true
+copy-js = true
+line-numbers = true
+
+[preprocessor.links]
+
+[output.html.print]
+enable = true
