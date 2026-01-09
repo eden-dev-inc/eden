@@ -79,7 +79,7 @@ struct MigrationResponseData {
     #[allow(dead_code)]
     uuid: String,
     #[serde(default)]
-    state: Option<String>,
+    status: Option<String>,
 }
 
 // ============================================
@@ -104,9 +104,16 @@ enum SetupStep {
 enum MigrationStatus {
     NotSetup,
     Pending,
-    InProgress,
+    Testing,
+    Ready,
+    Running,
+    PartialFailure,
+    Failed,
+    Paused,
+    Cancelled,
     Completed,
-    Failed(String),
+    RollingBack,
+    RolledBack,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -184,7 +191,28 @@ impl MigrationState {
     }
 
     fn can_migrate(&self) -> bool {
-        self.is_ready() && matches!(self.status, MigrationStatus::Pending)
+        self.is_ready()
+            && matches!(
+                self.status,
+                MigrationStatus::Pending | MigrationStatus::Testing | MigrationStatus::Ready
+            )
+    }
+}
+
+fn parse_migration_status(status: Option<&str>) -> MigrationStatus {
+    match status {
+        Some("Pending") | None => MigrationStatus::Pending,
+        Some("Testing") => MigrationStatus::Testing,
+        Some("Ready") => MigrationStatus::Ready,
+        Some("Running") => MigrationStatus::Running,
+        Some("PartialFailure") => MigrationStatus::PartialFailure,
+        Some("Failed") => MigrationStatus::Failed,
+        Some("Paused") => MigrationStatus::Paused,
+        Some("Cancelled") => MigrationStatus::Cancelled,
+        Some("Completed") => MigrationStatus::Completed,
+        Some("RollingBack") => MigrationStatus::RollingBack,
+        Some("RolledBack") => MigrationStatus::RolledBack,
+        Some(_) => MigrationStatus::Pending, // Default to Pending for unknown
     }
 }
 
@@ -441,13 +469,13 @@ impl EdenApiClient {
             .map(|s| s.to_string())
             .unwrap_or_else(|| id.clone());
 
-        let state = json
-            .get("state")
-            .or_else(|| json.get("data").and_then(|d| d.get("state")))
+        let status = json
+            .get("status")
+            .or_else(|| json.get("data").and_then(|d| d.get("status")))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        Ok(MigrationResponseData { id, uuid, state })
+        Ok(MigrationResponseData { id, uuid, status })
     }
 
     async fn add_interlay_to_migration(
@@ -1060,7 +1088,7 @@ async fn run_migration_setup(
     // Setup complete
     let _ = tx
         .send(ApiEvent::SetupComplete {
-            auth_token: token,
+            auth_token: token.clone(),
             source_endpoint_id: source_ep.id,
             dest_endpoint_id: dest_ep.id,
             interlay_id: interlay.id,
@@ -1071,17 +1099,18 @@ async fn run_migration_setup(
         .send(ApiEvent::SetupProgress(SetupStep::Ready))
         .await;
 
-    // Sync the migration status based on actual state from API
-    let status = match migration.state.as_deref() {
-        Some("Pending") | None => MigrationStatus::Pending,
-        Some("InProgress") | Some("In Progress") => MigrationStatus::InProgress,
-        Some("Completed") | Some("Complete") => MigrationStatus::Completed,
-        Some("Failed") => MigrationStatus::Failed("Migration failed".to_string()),
-        Some(other) => MigrationStatus::Failed(format!("Unknown state: {}", other)),
-    };
-    let _ = tx
-        .send(ApiEvent::MigrationStatusUpdate(status))
-        .await;
+    // Collect status using get after startup completes
+    match client.get_migration(&migration.id).await {
+        Ok(data) => {
+            let status = parse_migration_status(data.status.as_deref());
+            let _ = tx.send(ApiEvent::MigrationStatusUpdate(status)).await;
+        }
+        Err(_) => {
+            // Fallback to status from create/get response
+            let status = parse_migration_status(migration.status.as_deref());
+            let _ = tx.send(ApiEvent::MigrationStatusUpdate(status)).await;
+        }
+    }
 }
 
 async fn trigger_migration_task(
@@ -1096,10 +1125,31 @@ async fn trigger_migration_task(
     match client.trigger_migration(&migration_id).await {
         Ok(_) => {
             let _ = tx.send(ApiEvent::MigrationTriggered).await;
-            let _ = tx
-                .send(ApiEvent::MigrationStatusUpdate(MigrationStatus::InProgress))
-                .await;
-            // Use 'r' to manually refresh status
+
+            // Poll status every second until migration completes or fails
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+
+                match client.get_migration(&migration_id).await {
+                    Ok(data) => {
+                        let status = parse_migration_status(data.status.as_deref());
+                        let _ = tx.send(ApiEvent::MigrationStatusUpdate(status.clone())).await;
+
+                        // Stop polling when migration reaches a terminal state
+                        match status {
+                            MigrationStatus::Completed
+                            | MigrationStatus::Failed
+                            | MigrationStatus::Cancelled
+                            | MigrationStatus::RolledBack => break,
+                            _ => {}
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx.send(ApiEvent::MigrationError(e)).await;
+                        break;
+                    }
+                }
+            }
         }
         Err(e) => {
             let _ = tx.send(ApiEvent::MigrationError(e)).await;
@@ -1116,15 +1166,16 @@ async fn refresh_migration_task(
 ) {
     let client = EdenApiClient::new(org_id, api_base).with_auth(auth_token);
 
-    match client.refresh_migration(&migration_id).await {
+    // First call refresh endpoint to sync state
+    if let Err(e) = client.refresh_migration(&migration_id).await {
+        let _ = tx.send(ApiEvent::MigrationError(e)).await;
+        return;
+    }
+
+    // Then collect status using get
+    match client.get_migration(&migration_id).await {
         Ok(data) => {
-            let status = match data.state.as_deref() {
-                Some("Pending") | None => MigrationStatus::Pending,
-                Some("InProgress") | Some("In Progress") => MigrationStatus::InProgress,
-                Some("Completed") | Some("Complete") => MigrationStatus::Completed,
-                Some("Failed") => MigrationStatus::Failed("Migration failed".to_string()),
-                Some(other) => MigrationStatus::Failed(format!("Unknown state: {}", other)),
-            };
+            let status = parse_migration_status(data.status.as_deref());
             let _ = tx.send(ApiEvent::MigrationStatusUpdate(status)).await;
         }
         Err(e) => {
@@ -1253,7 +1304,7 @@ impl App {
             coverage_countdown: 0, // Run immediately on first tick
             should_quit: false,
             force_coverage: false,
-            show_ops: false,
+            show_ops: true,
             show_debug: false,
             debug_log: Vec::new(),
             migration_state: MigrationState::new(api_base),
@@ -1326,15 +1377,18 @@ impl App {
                 }
                 ApiEvent::MigrationTriggered => {
                     self.log_debug("Migration started".to_string());
-                    self.migration_state.status = MigrationStatus::InProgress;
+                    self.migration_state.status = MigrationStatus::Running;
                     self.migration_state.last_error = None;
                 }
                 ApiEvent::MigrationStatusUpdate(ref status) => {
                     // Only log significant status changes
                     match status {
                         MigrationStatus::Completed => self.log_debug("Migration completed".to_string()),
-                        MigrationStatus::Failed(e) => self.log_debug(format!("Migration failed: {}", e)),
-                        _ => {} // Don't log pending/in-progress repeatedly
+                        MigrationStatus::Failed => self.log_debug("Migration failed".to_string()),
+                        MigrationStatus::PartialFailure => self.log_debug("Migration partial failure".to_string()),
+                        MigrationStatus::Cancelled => self.log_debug("Migration cancelled".to_string()),
+                        MigrationStatus::RolledBack => self.log_debug("Migration rolled back".to_string()),
+                        _ => {} // Don't log pending/running repeatedly
                     }
                     self.migration_state.status = status.clone();
                 }
@@ -1866,10 +1920,17 @@ fn draw_api_panel(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("Status: ", Style::default().fg(Color::White)),
         match &state.status {
             MigrationStatus::NotSetup => Span::styled("Not configured", Style::default().fg(Color::DarkGray)),
-            MigrationStatus::Pending => Span::styled("Ready to migrate", Style::default().fg(Color::Cyan)),
-            MigrationStatus::InProgress => Span::styled("Migrating...", Style::default().fg(Color::Yellow)),
+            MigrationStatus::Pending => Span::styled("Pending", Style::default().fg(Color::DarkGray)),
+            MigrationStatus::Testing => Span::styled("Testing...", Style::default().fg(Color::Yellow)),
+            MigrationStatus::Ready => Span::styled("Ready to migrate", Style::default().fg(Color::Cyan)),
+            MigrationStatus::Running => Span::styled("Running...", Style::default().fg(Color::Yellow)),
+            MigrationStatus::PartialFailure => Span::styled("Partial failure", Style::default().fg(Color::Red)),
+            MigrationStatus::Failed => Span::styled("Failed", Style::default().fg(Color::Red)),
+            MigrationStatus::Paused => Span::styled("Paused", Style::default().fg(Color::Yellow)),
+            MigrationStatus::Cancelled => Span::styled("Cancelled", Style::default().fg(Color::Red)),
             MigrationStatus::Completed => Span::styled("Completed", Style::default().fg(Color::Green)),
-            MigrationStatus::Failed(msg) => Span::styled(format!("Failed: {}", msg), Style::default().fg(Color::Red)),
+            MigrationStatus::RollingBack => Span::styled("Rolling back...", Style::default().fg(Color::Yellow)),
+            MigrationStatus::RolledBack => Span::styled("Rolled back", Style::default().fg(Color::Magenta)),
         },
     ]));
 
@@ -2141,11 +2202,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Migration summary
     println!("\n--- Migration ---");
     match &app.migration_state.status {
-        MigrationStatus::Completed => println!("Migration completed successfully"),
-        MigrationStatus::Failed(e) => println!("Migration failed: {}", e),
-        MigrationStatus::InProgress => println!("Migration in progress"),
-        MigrationStatus::Pending => println!("Migration pending (not started)"),
         MigrationStatus::NotSetup => println!("Migration not configured"),
+        MigrationStatus::Pending => println!("Migration pending"),
+        MigrationStatus::Testing => println!("Migration testing"),
+        MigrationStatus::Ready => println!("Migration ready"),
+        MigrationStatus::Running => println!("Migration running"),
+        MigrationStatus::PartialFailure => println!("Migration partial failure"),
+        MigrationStatus::Failed => println!("Migration failed"),
+        MigrationStatus::Paused => println!("Migration paused"),
+        MigrationStatus::Cancelled => println!("Migration cancelled"),
+        MigrationStatus::Completed => println!("Migration completed successfully"),
+        MigrationStatus::RollingBack => println!("Migration rolling back"),
+        MigrationStatus::RolledBack => println!("Migration rolled back"),
     }
     if let Some(ref id) = app.migration_state.migration_id {
         println!("Migration ID: {}", id);
