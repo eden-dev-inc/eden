@@ -1,10 +1,11 @@
-# Analytics Demo - Database Migration Showcase
+# Analytics Demo - Redis Migration Showcase
 
-A high-performance Rust application that simulates realistic analytics workloads to demonstrate database migration capabilities under load.
+A high-performance Rust application that simulates realistic analytics workloads to demonstrate Redis migration capabilities with 10K+ QPS support.
 
 ## Features
 
 - **Self-contained**: Runs entirely with Docker - no external dependencies
+- **High Throughput**: Supports 10K+ queries per second
 - **Configurable Load**: Adjust events/queries per second via environment variables
 - **Realistic Patterns**: Simulates real analytics platform with proper caching
 - **Full Telemetry**: Prometheus metrics + Grafana dashboards
@@ -32,31 +33,35 @@ Configure load patterns via environment variables:
 
 ```bash
 # Ultra-high load scenario (10k+ req/s total)
-EVENTS_PER_SECOND=2000 QUERIES_PER_SECOND=8000 docker-compose up -d
+make run-ultra-load
 ```
 ```bash
 # High load scenario (1000+ req/s total)
-EVENTS_PER_SECOND=300 QUERIES_PER_SECOND=700 docker-compose up -d
+make run-high-load
 ```
 ```bash
 # Medium load (good for demos)
-EVENTS_PER_SECOND=50 QUERIES_PER_SECOND=150 docker-compose up -d
+make run-demo-load
 ```
 ```bash
 # Low load scenario for testing
-EVENTS_PER_SECOND=10 QUERIES_PER_SECOND=20 docker-compose up -d
+make run-low-load
 ```
 
 Available configuration options:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `EVENTS_PER_SECOND` | 100 | Events generated per second |
-| `QUERIES_PER_SECOND` | 200 | Analytics queries per second |
-| `ORGANIZATIONS` | 50 | Number of organizations |
+| `EVENTS_PER_SECOND` | 1000 | Events generated per second (Redis INCR operations) |
+| `QUERIES_PER_SECOND` | 10000 | Analytics queries per second |
+| `ORGANIZATIONS` | 500 | Number of tenant organizations to simulate |
 | `USERS_PER_ORG` | 1000 | Users per organization |
-| `CACHE_HIT_TARGET` | 85 | Target cache hit ratio % |
-| `READ_WRITE_RATIO` | 80 | Read percentage (80% reads, 20% writes) |
+| `CACHE_HIT_TARGET` | 95 | Target cache hit ratio % |
+| `MAX_WORKERS` | 500 | Maximum number of query workers |
+| `REDIS_POOL_SIZE` | 100 | Redis connection pool size |
+| `CACHE_TTL` | 300 | Default cache TTL in seconds |
+| `WARMUP_INTERVAL` | 300 | Cache warmup/refresh interval in seconds |
+| `TIME_BUCKETS` | 24 | Number of time buckets for hourly analytics |
 
 ## Architecture
 
@@ -78,7 +83,7 @@ Available configuration options:
 Simulates a SaaS analytics platform:
 
 - **Organizations**: Multi-tenant companies
-- **Users**: Users within each organization  
+- **Users**: Users within each organization
 - **Events**: User activity (page views, clicks, conversions)
 - **Analytics**: Real-time aggregations and reports
 
@@ -86,7 +91,7 @@ Simulates a SaaS analytics platform:
 
 **Event Distribution**:
 - 60% Page Views
-- 28% Clicks  
+- 28% Clicks
 - 10% Conversions
 - 1.5% Sign-ups
 - 0.5% Purchases
@@ -102,7 +107,7 @@ Key metrics exposed for monitoring migration impact:
 
 **Performance**:
 - Query duration percentiles (p50, p95, p99)
-- Database connection pool utilization
+- Redis connection pool utilization
 - Cache hit/miss ratios
 - Events and queries per second
 
@@ -125,8 +130,8 @@ Key metrics exposed for monitoring migration impact:
    ```
 
 2. **Simulate Migration**:
-   - Start your database migration tool
-   - Point to new database instance
+   - Start your Redis migration tool
+   - Point to new Redis instance
    - Observe metrics during transition
 
 3. **Key Observations**:
@@ -153,7 +158,7 @@ make dev
 ### Customization
 
 Modify workload patterns in `src/generators.rs`:
-- Event type distributions  
+- Event type distributions
 - Cache key strategies
 - Query complexity
 
@@ -165,19 +170,32 @@ Add new metrics in `src/metrics.rs`:
 ## Commands
 
 ```bash
-make build      # Build Docker images
-make run        # Start full stack
-make stop       # Stop all services  
-make clean      # Remove volumes and images
-make logs       # View application logs
-make health     # Check service health
+make build          # Build Docker images
+make run            # Start full stack (high load by default)
+make run-ultra-load # Ultra-high load (2000 events/s, 8000 queries/s)
+make run-high-load  # High load (300 events/s, 700 queries/s)
+make run-demo-load  # Demo load (50 events/s, 150 queries/s)
+make run-low-load   # Low load (10 events/s, 20 queries/s)
+make stop           # Stop all services
+make clean          # Remove volumes and images
+make logs           # View application logs
+make logs-all       # View logs from all services
+make health         # Check service health
+make metrics        # Show sample metrics
+make stats          # Show Docker stats
+make grafana        # Open Grafana in browser
+make prometheus     # Open Prometheus in browser
+make dev-local      # Run locally with external DB
+make test           # Run tests
+make fmt            # Format code
+make lint           # Run clippy linter
 ```
 
 ## Monitoring
 
 Default Grafana dashboards show:
 - Request latency and throughput
-- Database performance metrics
+- Redis performance metrics
 - Cache efficiency
 - Business KPIs
 - System resource usage

@@ -1,1 +1,0 @@
-All assets referenced as part of a blog

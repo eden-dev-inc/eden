@@ -22,9 +22,12 @@
 //!     q / Ctrl+C         Quit
 //!     c                  Force coverage check now
 //!     v                  Toggle ops/sec chart
+//!     Tab                Toggle migration mode (BigBang / Canary)
 //!     s                  Start migration setup (connect to Eden API)
 //!     m                  Trigger migration
 //!     r                  Refresh migration status
+//!     +/=                Increase canary traffic by 5% (canary mode only)
+//!     -                  Decrease canary traffic by 5% (canary mode only)
 
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
@@ -80,6 +83,59 @@ struct MigrationResponseData {
     uuid: String,
     #[serde(default)]
     status: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct UpdateTrafficResponse {
+    #[allow(dead_code)]
+    migration_id: String,
+    old_percentage: f64,
+    new_percentage: f64,
+}
+
+// ============================================
+// Migration Mode Selection
+// ============================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+enum MigrationMode {
+    #[default]
+    BigBang,
+    Canary,
+}
+
+impl MigrationMode {
+    fn toggle(&self) -> Self {
+        match self {
+            Self::BigBang => Self::Canary,
+            Self::Canary => Self::BigBang,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            Self::BigBang => "BigBang",
+            Self::Canary => "Canary",
+        }
+    }
+}
+
+/// Canary-specific state for traffic management
+#[derive(Debug, Clone)]
+struct CanaryState {
+    /// Current read percentage routed to new system (0.0 to 1.0)
+    read_percentage: f64,
+    /// Write consistency policy
+    write_policy: &'static str,
+}
+
+impl Default for CanaryState {
+    fn default() -> Self {
+        Self {
+            read_percentage: 0.05, // Start with 5%
+            write_policy: "OldAuthoritative",
+        }
+    }
 }
 
 // ============================================
@@ -153,6 +209,10 @@ struct MigrationState {
     status: MigrationStatus,
     last_error: Option<String>,
     api_calls: Vec<ApiCall>,
+    /// Selected migration mode (BigBang or Canary)
+    mode: MigrationMode,
+    /// Canary-specific state (only relevant when mode is Canary)
+    canary: CanaryState,
 }
 
 impl MigrationState {
@@ -177,6 +237,8 @@ impl MigrationState {
                 ApiCall::new("Create Migration"),
                 ApiCall::new("Add Interlay to Migration"),
             ],
+            mode: MigrationMode::default(),
+            canary: CanaryState::default(),
         }
     }
 
@@ -196,6 +258,12 @@ impl MigrationState {
                 self.status,
                 MigrationStatus::Pending | MigrationStatus::Testing | MigrationStatus::Ready
             )
+    }
+
+    fn can_update_traffic(&self) -> bool {
+        self.is_ready()
+            && self.mode == MigrationMode::Canary
+            && self.status == MigrationStatus::Running
     }
 }
 
@@ -235,6 +303,13 @@ enum ApiEvent {
     MigrationTriggered,
     MigrationStatusUpdate(MigrationStatus),
     MigrationError(String),
+    /// Canary traffic split was updated
+    TrafficUpdated {
+        old_percentage: f64,
+        new_percentage: f64,
+    },
+    /// Canary traffic update failed
+    TrafficUpdateFailed(String),
 }
 
 // ============================================
@@ -415,14 +490,33 @@ impl EdenApiClient {
             .map_err(|e| format!("Failed to parse interlay response: {}", e))
     }
 
-    async fn create_migration(&self, migration_id: &str) -> Result<MigrationResponseData, String> {
-        let body = serde_json::json!({
-            "id": migration_id,
-            "description": "Redis big bang migration",
-            "strategy": {"type": "big_bang", "durability": true},
-            "data": null,
-            "failure_handling": null
-        });
+    async fn create_migration(
+        &self,
+        migration_id: &str,
+        mode: MigrationMode,
+        canary_state: &CanaryState,
+    ) -> Result<MigrationResponseData, String> {
+        let body = match mode {
+            MigrationMode::BigBang => serde_json::json!({
+                "id": migration_id,
+                "description": "Redis big bang migration",
+                "strategy": {"type": "big_bang", "durability": true},
+                "data": null,
+                "failure_handling": null
+            }),
+            MigrationMode::Canary => serde_json::json!({
+                "id": migration_id,
+                "description": "Redis canary migration",
+                "strategy": {
+                    "type": "canary",
+                    "read_percentage": canary_state.read_percentage,
+                    "write_mode": {
+                        "mode": "dual_write",
+                        "policy": canary_state.write_policy
+                    }
+                }
+            }),
+        };
 
         let url = format!("{}/api/v1/migrations", self.base_url);
         let response = self
@@ -483,34 +577,81 @@ impl EdenApiClient {
         migration_id: &str,
         interlay_id: &str,
         dest_endpoint_id: &str,
+        mode: MigrationMode,
+        canary_state: &CanaryState,
     ) -> Result<(), String> {
-        let body = serde_json::json!({
-            "id": format!("{}_relay", migration_id),
-            "endpoint": dest_endpoint_id,
-            "description": "Migration interlay configuration",
-            "migration_strategy": {
-                "type": "big_bang",
-                "durability": true
-            },
-            "migration_data": {
-                "Scan": {
-                    "replace": "None"
-                }
-            },
-            "testing_validation": null,
-            "migration_rules": {
-                "traffic": {
-                    "read": "Replicated",
-                    "write": "New"
+        let body = match mode {
+            MigrationMode::BigBang => serde_json::json!({
+                "id": format!("{}_relay", migration_id),
+                "endpoint": dest_endpoint_id,
+                "description": "Migration interlay configuration",
+                "migration_strategy": {
+                    "type": "big_bang",
+                    "durability": true
                 },
-                "error": "DoNothing",
-                "rollback": "Ignore",
-                "completion": {
-                    "milestone": "Immediate",
-                    "require_manual_approval": false
+                "migration_data": {
+                    "Scan": {
+                        "replace": "None"
+                    }
+                },
+                "testing_validation": null,
+                "migration_rules": {
+                    "traffic": {
+                        "read": "Replicated",
+                        "write": "New"
+                    },
+                    "error": "DoNothing",
+                    "rollback": "Ignore",
+                    "completion": {
+                        "milestone": "Immediate",
+                        "require_manual_approval": false
+                    }
                 }
-            }
-        });
+            }),
+            MigrationMode::Canary => serde_json::json!({
+                "id": format!("{}_relay", migration_id),
+                "endpoint": dest_endpoint_id,
+                "description": "Canary migration interlay configuration",
+                "migration_strategy": {
+                    "type": "canary",
+                    "read_percentage": canary_state.read_percentage,
+                    "write_mode": {
+                        "mode": "dual_write",
+                        "policy": canary_state.write_policy
+                    }
+                },
+                "migration_data": {
+                    "Scan": {
+                        "replace": "None"
+                    }
+                },
+                "testing_validation": null,
+                "migration_rules": {
+                    "traffic": {
+                        "read": {
+                            "Ratio": {
+                                "strategy": {
+                                    "Random": { "ratio": canary_state.read_percentage }
+                                }
+                            }
+                        },
+                        "write": {
+                            "Replicated": {
+                                "policy": canary_state.write_policy
+                            }
+                        }
+                    },
+                    "error": "DoNothing",
+                    "rollback": "Ignore",
+                    "completion": {
+                        "milestone": {
+                            "TotalRequests": 1000000
+                        },
+                        "require_manual_approval": false
+                    }
+                }
+            }),
+        };
 
         let url = format!(
             "{}/api/v1/migrations/{}/interlay/{}",
@@ -540,6 +681,51 @@ impl EdenApiClient {
         }
 
         Ok(())
+    }
+
+    /// Update canary traffic split percentage
+    async fn update_traffic_split(
+        &self,
+        migration_id: &str,
+        new_percentage: f64,
+        reason: &str,
+    ) -> Result<UpdateTrafficResponse, String> {
+        let body = serde_json::json!({
+            "read_percentage": new_percentage,
+            "reason": reason
+        });
+
+        let url = format!(
+            "{}/api/v1/migrations/{}/traffic",
+            self.base_url, migration_id
+        );
+        let response = self
+            .client
+            .patch(&url)
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.auth_token.as_ref().unwrap()),
+            )
+            .header("X-Org-Id", &self.org_id)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Update traffic split failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "Update traffic split failed ({}) PATCH {}: {}",
+                status, url, text
+            ));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse traffic update response: {}", e))
     }
 
     async fn trigger_migration(&self, migration_id: &str) -> Result<(), String> {
@@ -695,6 +881,8 @@ async fn run_migration_setup(
     dest_port: String,
     org_id: String,
     api_base: String,
+    mode: MigrationMode,
+    canary_state: CanaryState,
 ) {
     let client = EdenApiClient::new(org_id, api_base);
 
@@ -990,8 +1178,12 @@ async fn run_migration_setup(
         })
         .await;
 
-    let migration_id = format!("redis_migration_{}_{}", source_port, dest_port);
-    let migration = match client.create_migration(&migration_id).await {
+    let mode_suffix = match mode {
+        MigrationMode::BigBang => "bb",
+        MigrationMode::Canary => "canary",
+    };
+    let migration_id = format!("redis_migration_{}_{}_{}", source_port, dest_port, mode_suffix);
+    let migration = match client.create_migration(&migration_id, mode, &canary_state).await {
         Ok(m) => {
             let _ = tx
                 .send(ApiEvent::ApiCallUpdate {
@@ -1051,7 +1243,7 @@ async fn run_migration_setup(
         .await;
 
     if let Err(e) = client
-        .add_interlay_to_migration(&migration.id, &interlay.id, &dest_ep.id)
+        .add_interlay_to_migration(&migration.id, &interlay.id, &dest_ep.id, mode, &canary_state)
         .await
     {
         // Check if it's an "already exists" type error
@@ -1180,6 +1372,30 @@ async fn refresh_migration_task(
         }
         Err(e) => {
             let _ = tx.send(ApiEvent::MigrationError(e)).await;
+        }
+    }
+}
+
+async fn update_traffic_task(
+    tx: mpsc::Sender<ApiEvent>,
+    auth_token: String,
+    org_id: String,
+    migration_id: String,
+    api_base: String,
+    new_percentage: f64,
+) {
+    let client = EdenApiClient::new(org_id, api_base).with_auth(auth_token);
+
+    let reason = format!("Adjusting canary traffic to {:.0}%", new_percentage * 100.0);
+    match client.update_traffic_split(&migration_id, new_percentage, &reason).await {
+        Ok(response) => {
+            let _ = tx.send(ApiEvent::TrafficUpdated {
+                old_percentage: response.old_percentage,
+                new_percentage: response.new_percentage,
+            }).await;
+        }
+        Err(e) => {
+            let _ = tx.send(ApiEvent::TrafficUpdateFailed(e)).await;
         }
     }
 }
@@ -1396,6 +1612,18 @@ impl App {
                     self.log_debug(format!("Error: {}", err));
                     self.migration_state.last_error = Some(err);
                 }
+                ApiEvent::TrafficUpdated { old_percentage, new_percentage } => {
+                    self.log_debug(format!(
+                        "Traffic: {:.0}% → {:.0}%",
+                        old_percentage * 100.0,
+                        new_percentage * 100.0
+                    ));
+                    self.migration_state.canary.read_percentage = new_percentage;
+                }
+                ApiEvent::TrafficUpdateFailed(err) => {
+                    self.log_debug(format!("Traffic update failed: {}", err));
+                    self.migration_state.last_error = Some(err);
+                }
             }
         }
     }
@@ -1437,6 +1665,8 @@ impl App {
             let dest_port = self.config.eden_dest_port.clone();
             let org_id = self.migration_state.org_id.clone();
             let api_base = self.migration_state.api_base.clone();
+            let mode = self.migration_state.mode;
+            let canary_state = self.migration_state.canary.clone();
 
             self.runtime.spawn(run_migration_setup(
                 tx,
@@ -1446,8 +1676,49 @@ impl App {
                 dest_port,
                 org_id,
                 api_base,
+                mode,
+                canary_state,
             ));
         }
+    }
+
+    fn handle_toggle_mode(&mut self) {
+        // Only allow toggling before setup starts
+        if self.migration_state.setup_step == SetupStep::NotStarted {
+            self.migration_state.mode = self.migration_state.mode.toggle();
+            self.log_debug(format!("Mode: {}", self.migration_state.mode.name()));
+        }
+    }
+
+    fn handle_traffic_increase(&mut self) {
+        if self.migration_state.can_update_traffic() {
+            let new_percentage = (self.migration_state.canary.read_percentage + 0.05).min(1.0);
+            self.update_canary_traffic(new_percentage);
+        }
+    }
+
+    fn handle_traffic_decrease(&mut self) {
+        if self.migration_state.can_update_traffic() {
+            let new_percentage = (self.migration_state.canary.read_percentage - 0.05).max(0.0);
+            self.update_canary_traffic(new_percentage);
+        }
+    }
+
+    fn update_canary_traffic(&mut self, new_percentage: f64) {
+        let tx = self.api_event_tx.clone();
+        let token = self.migration_state.auth_token.clone().unwrap();
+        let org_id = self.migration_state.org_id.clone();
+        let migration_id = self.migration_state.migration_id.clone().unwrap();
+        let api_base = self.migration_state.api_base.clone();
+
+        self.runtime.spawn(update_traffic_task(
+            tx,
+            token,
+            org_id,
+            migration_id,
+            api_base,
+            new_percentage,
+        ));
     }
 
     fn update(&mut self) {
@@ -1876,12 +2147,56 @@ fn draw_api_panel(f: &mut Frame, area: Rect, app: &App) {
 
     let mut lines = vec![];
 
+    // Mode selector with tab indicator
+    let mode_color = match state.mode {
+        MigrationMode::BigBang => Color::Cyan,
+        MigrationMode::Canary => Color::Yellow,
+    };
+    let mode_can_change = state.setup_step == SetupStep::NotStarted;
+    lines.push(Line::from(vec![
+        Span::styled("Mode: ", Style::default().fg(Color::White)),
+        Span::styled(
+            state.mode.name(),
+            Style::default().fg(mode_color).bold(),
+        ),
+        if mode_can_change {
+            Span::styled(" (Tab)", Style::default().fg(Color::DarkGray))
+        } else {
+            Span::styled("", Style::default())
+        },
+    ]));
+
+    // Show canary percentage if in canary mode
+    if state.mode == MigrationMode::Canary {
+        let pct = state.canary.read_percentage * 100.0;
+        let pct_color = if pct >= 75.0 {
+            Color::Green
+        } else if pct >= 25.0 {
+            Color::Yellow
+        } else {
+            Color::Cyan
+        };
+        lines.push(Line::from(vec![
+            Span::styled("Traffic: ", Style::default().fg(Color::White)),
+            Span::styled(
+                format!("{:.0}%", pct),
+                Style::default().fg(pct_color).bold(),
+            ),
+            Span::styled(" to new", Style::default().fg(Color::DarkGray)),
+            if state.can_update_traffic() {
+                Span::styled(" (+/-)", Style::default().fg(Color::DarkGray))
+            } else {
+                Span::styled("", Style::default())
+            },
+        ]));
+    }
+    lines.push(Line::from(""));
+
     // Header
     lines.push(Line::from(Span::styled(
         "API Calls",
         Style::default().fg(Color::White).bold(),
     )));
-    lines.push(Line::from(""));
 
     // Show hint if setup hasn't started
     if state.setup_step == SetupStep::NotStarted {
@@ -2029,35 +2344,34 @@ fn draw_ui(f: &mut Frame, app: &App) {
     }
 
     // Status bar with migration keys
-    let status = Line::from(vec![
+    let mut status_spans = vec![
         Span::styled(" q", Style::default().fg(Color::White)),
         Span::styled(" quit  ", Style::default().fg(Color::DarkGray)),
-        Span::styled("c", Style::default().fg(Color::White)),
-        Span::styled(
-            format!(" coverage ({}s)  ", app.coverage_countdown),
-            Style::default().fg(Color::DarkGray),
-        ),
-        Span::styled("v", Style::default().fg(Color::White)),
-        Span::styled(
-            if app.show_ops {
-                " hide ops  "
-            } else {
-                " show ops  "
-            },
-            Style::default().fg(Color::DarkGray),
-        ),
+        Span::styled("Tab", Style::default().fg(Color::White)),
+        Span::styled(" mode  ", Style::default().fg(Color::DarkGray)),
         Span::styled("s", Style::default().fg(Color::White)),
         Span::styled(" setup  ", Style::default().fg(Color::DarkGray)),
         Span::styled("m", Style::default().fg(Color::White)),
         Span::styled(" migrate  ", Style::default().fg(Color::DarkGray)),
+    ];
+
+    // Show +/- for canary traffic control when applicable
+    if app.migration_state.mode == MigrationMode::Canary && app.migration_state.can_update_traffic() {
+        status_spans.push(Span::styled("+/-", Style::default().fg(Color::Yellow)));
+        status_spans.push(Span::styled(" traffic  ", Style::default().fg(Color::DarkGray)));
+    }
+
+    status_spans.extend(vec![
         Span::styled("r", Style::default().fg(Color::White)),
         Span::styled(" refresh  ", Style::default().fg(Color::DarkGray)),
         Span::styled("d", Style::default().fg(Color::White)),
         Span::styled(
-            if app.show_debug { " hide debug" } else { " debug" },
+            if app.show_debug { " debug" } else { " debug" },
             Style::default().fg(Color::DarkGray),
         ),
     ]);
+
+    let status = Line::from(status_spans);
     f.render_widget(Paragraph::new(status), right_chunks[3]);
 }
 
@@ -2156,9 +2470,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::Char('v') => app.show_ops = !app.show_ops,
                         KeyCode::Char('d') => app.show_debug = !app.show_debug,
                         KeyCode::Esc => app.should_quit = true,
+                        KeyCode::Tab => app.handle_toggle_mode(),
                         KeyCode::Char('s') => app.handle_setup_key(),
                         KeyCode::Char('m') => app.handle_migrate_key(),
                         KeyCode::Char('r') => app.handle_refresh_key(),
+                        KeyCode::Char('+') | KeyCode::Char('=') => app.handle_traffic_increase(),
+                        KeyCode::Char('-') => app.handle_traffic_decrease(),
                         _ => {}
                     }
                 }

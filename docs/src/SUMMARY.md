@@ -68,3 +68,12 @@
 
 - [FAQ](./appendix/faq.md)
 - [Troubleshooting](./appendix/troubleshooting.md)
+
+# Changelog
+
+- [Overview](./changelog/overview.md)
+
+# Blog
+
+- [All Posts](./blog/index.md)
+- [Tackling the Post-Migration Crisis](./blog/tackling-the-post-migration-crisis.md)
