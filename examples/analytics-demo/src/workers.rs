@@ -87,8 +87,13 @@ impl SyntheticDataGenerator {
     pub fn analytics_overview(org_id: Uuid, hours: i32) -> AnalyticsOverview {
         let mut rng = StdRng::from_entropy();
         let base_events = rng.gen_range(10000..100000) * (hours as i64) / 24;
-        let page_views = (base_events as f64 * 0.6) as i64;
-        let conversions = (base_events as f64 * 0.02) as i64;
+
+        // Add variation to percentages (±20% of base rate)
+        let page_view_rate = 0.6 + rng.gen_range(-0.12..0.12);
+        let conversion_rate_base = 0.02 + rng.gen_range(-0.008..0.015);
+
+        let page_views = (base_events as f64 * page_view_rate) as i64;
+        let conversions = (base_events as f64 * conversion_rate_base) as i64;
 
         AnalyticsOverview {
             organization_id: org_id,
@@ -106,22 +111,32 @@ impl SyntheticDataGenerator {
         let mut rng = StdRng::from_entropy();
         let hour = Utc::now() - Duration::hours(hour_offset as i64);
 
-        // Simulate daily patterns - more traffic during business hours
-        let hour_of_day = hour.format("%H").to_string().parse::<i32>().unwrap_or(12);
-        let traffic_multiplier = if (9..18).contains(&hour_of_day) { 1.5 } else { 0.7 };
+        // Simulate realistic daily patterns with gradual peaks
+        let hour_of_day = hour.format("%H").to_string().parse::<f64>().unwrap_or(12.0);
+        // Bell curve centered at 14:00 (2pm) with morning and evening shoulders
+        let traffic_multiplier = 0.5 + 1.2 * (-(hour_of_day - 14.0).powi(2) / 50.0).exp()
+            + 0.3 * (-(hour_of_day - 10.0).powi(2) / 20.0).exp()
+            + rng.gen_range(-0.15..0.15); // Add noise
 
-        let base = (rng.gen_range(500..2000) as f64 * traffic_multiplier) as i64;
+        let base = (rng.gen_range(500..2000) as f64 * traffic_multiplier.max(0.3)) as i64;
+
+        // Add variation to event type percentages (±25% of base rate)
+        let page_view_rate = 0.6 + rng.gen_range(-0.15..0.15);
+        let click_rate = 0.25 + rng.gen_range(-0.06..0.06);
+        let conversion_rate = 0.02 + rng.gen_range(-0.008..0.012);
+        let signup_rate = 0.005 + rng.gen_range(-0.002..0.003);
+        let purchase_rate = 0.003 + rng.gen_range(-0.001..0.002);
 
         HourlyMetrics {
             organization_id: org_id,
             hour,
             events: base,
             unique_users: base / rng.gen_range(3..8),
-            page_views: (base as f64 * 0.6) as i64,
-            clicks: (base as f64 * 0.25) as i64,
-            conversions: (base as f64 * 0.02) as i64,
-            signups: (base as f64 * 0.005) as i64,
-            purchases: (base as f64 * 0.003) as i64,
+            page_views: (base as f64 * page_view_rate) as i64,
+            clicks: (base as f64 * click_rate) as i64,
+            conversions: (base as f64 * conversion_rate) as i64,
+            signups: (base as f64 * signup_rate) as i64,
+            purchases: (base as f64 * purchase_rate) as i64,
             revenue: rng.gen_range(100.0..5000.0),
         }
     }
@@ -275,6 +290,7 @@ impl QuerySimulatorWorker {
         let mut rng = StdRng::from_entropy();
         let query_type = rng.gen_range(0..100);
 
+        let start = Instant::now();
         let result = match query_type {
             0..=39 => self.get_analytics_overview(org_id, 24).await,
             40..=59 => {
@@ -288,6 +304,10 @@ impl QuerySimulatorWorker {
             90..=94 => self.get_realtime_stats(org_id).await,
             _ => self.get_analytics_overview(org_id, 1).await,
         };
+        let latency_ns = start.elapsed().as_nanos() as u64;
+
+        // Record live latency using AtomicU64
+        self.metrics.record_live_latency_ns(latency_ns);
 
         match result {
             Ok(cache_hit) => {
@@ -708,6 +728,9 @@ impl SystemMonitorWorker {
         let org_count = self.org_cache.get_org_ids().await.len() as i64;
         self.metrics.active_organizations.set(org_count);
         self.metrics.events_per_second.set(config.events_per_second as i64);
+
+        // Log live latency stats
+        self.metrics.log_live_latency();
 
         Ok(())
     }

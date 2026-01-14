@@ -20,7 +20,8 @@
 //!
 //! # Controls
 //!     q / Ctrl+C         Quit
-//!     c                  Force coverage check now
+//!     c                  Complete running migration
+//!     f                  Force coverage check now
 //!     v                  Toggle ops/sec chart
 //!     Tab                Toggle migration mode (BigBang / Canary)
 //!     s                  Start migration setup (connect to Eden API)
@@ -91,6 +92,16 @@ struct UpdateTrafficResponse {
     migration_id: String,
     old_percentage: f64,
     new_percentage: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CompleteMigrationResponse {
+    #[allow(dead_code)]
+    migration_id: String,
+    #[allow(dead_code)]
+    status: String,
+    #[allow(dead_code)]
+    message: Option<String>,
 }
 
 // ============================================
@@ -265,6 +276,10 @@ impl MigrationState {
             && self.mode == MigrationMode::Canary
             && self.status == MigrationStatus::Running
     }
+
+    fn can_complete(&self) -> bool {
+        self.is_ready() && self.status == MigrationStatus::Running
+    }
 }
 
 fn parse_migration_status(status: Option<&str>) -> MigrationStatus {
@@ -310,6 +325,10 @@ enum ApiEvent {
     },
     /// Canary traffic update failed
     TrafficUpdateFailed(String),
+    /// Migration was manually completed
+    MigrationCompleted,
+    /// Migration completion failed
+    MigrationCompleteFailed(String),
 }
 
 // ============================================
@@ -751,6 +770,49 @@ impl EdenApiClient {
         }
 
         Ok(())
+    }
+
+    /// Manually complete a running migration
+    async fn complete_migration(
+        &self,
+        migration_id: &str,
+        reason: Option<&str>,
+    ) -> Result<CompleteMigrationResponse, String> {
+        let body = serde_json::json!({
+            "reason": reason.unwrap_or("Manual completion from TUI")
+        });
+
+        let url = format!(
+            "{}/api/v1/migrations/{}/complete",
+            self.base_url, migration_id
+        );
+        let response = self
+            .client
+            .post(&url)
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.auth_token.as_ref().unwrap()),
+            )
+            .header("X-Org-Id", &self.org_id)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Complete migration failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "Complete migration failed ({}) POST {}: {}",
+                status, url, text
+            ));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse complete migration response: {}", e))
     }
 
     async fn refresh_migration(
@@ -1400,6 +1462,27 @@ async fn update_traffic_task(
     }
 }
 
+async fn complete_migration_task(
+    tx: mpsc::Sender<ApiEvent>,
+    auth_token: String,
+    org_id: String,
+    migration_id: String,
+    api_base: String,
+) {
+    let client = EdenApiClient::new(org_id, api_base).with_auth(auth_token);
+
+    match client.complete_migration(&migration_id, None).await {
+        Ok(_) => {
+            let _ = tx.send(ApiEvent::MigrationCompleted).await;
+            // Also send status update to sync the UI
+            let _ = tx.send(ApiEvent::MigrationStatusUpdate(MigrationStatus::Completed)).await;
+        }
+        Err(e) => {
+            let _ = tx.send(ApiEvent::MigrationCompleteFailed(e)).await;
+        }
+    }
+}
+
 // ============================================
 // Application Config and State
 // ============================================
@@ -1624,6 +1707,15 @@ impl App {
                     self.log_debug(format!("Traffic update failed: {}", err));
                     self.migration_state.last_error = Some(err);
                 }
+                ApiEvent::MigrationCompleted => {
+                    self.log_debug("Migration manually completed".to_string());
+                    self.migration_state.status = MigrationStatus::Completed;
+                    self.migration_state.last_error = None;
+                }
+                ApiEvent::MigrationCompleteFailed(err) => {
+                    self.log_debug(format!("Complete failed: {}", err));
+                    self.migration_state.last_error = Some(err);
+                }
             }
         }
     }
@@ -1687,6 +1779,19 @@ impl App {
         if self.migration_state.setup_step == SetupStep::NotStarted {
             self.migration_state.mode = self.migration_state.mode.toggle();
             self.log_debug(format!("Mode: {}", self.migration_state.mode.name()));
+        }
+    }
+
+    fn handle_complete_key(&mut self) {
+        if self.migration_state.can_complete() {
+            let tx = self.api_event_tx.clone();
+            let token = self.migration_state.auth_token.clone().unwrap();
+            let org_id = self.migration_state.org_id.clone();
+            let migration_id = self.migration_state.migration_id.clone().unwrap();
+            let api_base = self.migration_state.api_base.clone();
+
+            self.runtime
+                .spawn(complete_migration_task(tx, token, org_id, migration_id, api_base));
         }
     }
 
@@ -2466,7 +2571,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if key.kind == KeyEventKind::Press {
                     match key.code {
                         KeyCode::Char('q') => app.should_quit = true,
-                        KeyCode::Char('c') => app.force_coverage = true,
+                        KeyCode::Char('c') => app.handle_complete_key(),
+                        KeyCode::Char('f') => app.force_coverage = true,
                         KeyCode::Char('v') => app.show_ops = !app.show_ops,
                         KeyCode::Char('d') => app.show_debug = !app.show_debug,
                         KeyCode::Esc => app.should_quit = true,
