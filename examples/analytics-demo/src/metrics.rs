@@ -84,6 +84,9 @@ impl LockFreeLatencyHistogram {
     /// Get percentiles and reset the histogram
     /// Returns (count, avg_us, min_us, max_us, p50_us, p95_us, p99_us)
     pub fn get_percentiles_and_reset(&self) -> (u64, f64, f64, f64, f64, f64, f64) {
+        // Snapshot write index and reset it to 0 for fresh start
+        let write_idx = self.write_idx.swap(0, Ordering::Relaxed);
+
         // Snapshot and reset counters
         let count = self.total_count.swap(0, Ordering::Relaxed);
         let sum_ns = self.sum_ns.swap(0, Ordering::Relaxed);
@@ -94,10 +97,13 @@ impl LockFreeLatencyHistogram {
             return (0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
         }
 
-        // Collect samples from circular buffer
-        let sample_count = (count as usize).min(SAMPLE_SLOTS);
+        // Determine how many valid samples we have
+        // If write_idx < SAMPLE_SLOTS, we haven't wrapped yet
+        // If write_idx >= SAMPLE_SLOTS, buffer is full
+        let sample_count = (write_idx as usize).min(SAMPLE_SLOTS);
         let mut samples: Vec<u64> = Vec::with_capacity(sample_count);
 
+        // Collect and reset samples from circular buffer
         for i in 0..sample_count {
             let val = self.samples[i].swap(0, Ordering::Relaxed);
             if val > 0 {
