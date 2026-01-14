@@ -66,57 +66,57 @@ check-files:
 
 # Build all images
 build: setup check-files
-	docker-compose build
+	docker compose build
 
 # Run the full stack
 run: setup check-files
-	docker-compose up -d
+	docker compose up -d
 
 # Run with logs visible
 run-logs: setup check-files
-	docker-compose up
+	docker compose up
 
 # Run in development mode with overrides
 dev: setup
-	docker-compose -f docker-compose.yml -f docker-compose.override.yml up --build
+	docker compose -f docker-compose.yml -f docker-compose.override.yml up --build
 
 # Run the full stack with high load by default
 run: setup check-files
-	EVENTS_PER_SECOND=1000 QUERIES_PER_SECOND=2000 docker-compose up -d
+	EVENTS_PER_SECOND=1000 QUERIES_PER_SECOND=2000 docker compose up -d
 
 # Ultra-high load scenario (10k+ req/s total)
 run-ultra-load: setup
-	EVENTS_PER_SECOND=2000 QUERIES_PER_SECOND=8000 docker-compose up -d
+	EVENTS_PER_SECOND=2000 QUERIES_PER_SECOND=8000 docker compose up -d
 
 # High load scenario (1000+ req/s total)
 run-high-load: setup
-	EVENTS_PER_SECOND=300 QUERIES_PER_SECOND=700 docker-compose up -d
+	EVENTS_PER_SECOND=300 QUERIES_PER_SECOND=700 docker compose up -d
 
 # Medium load (good for demos)
 run-demo-load: setup
-	EVENTS_PER_SECOND=50 QUERIES_PER_SECOND=150 docker-compose up -d
+	EVENTS_PER_SECOND=50 QUERIES_PER_SECOND=150 docker compose up -d
 
 # Low load scenario for testing
 run-low-load: setup
-	EVENTS_PER_SECOND=10 QUERIES_PER_SECOND=20 docker-compose up -d
+	EVENTS_PER_SECOND=10 QUERIES_PER_SECOND=20 docker compose up -d
 
 # Stop all services
 stop:
-	docker-compose down
+	docker compose down
 
 # Stop and remove volumes (clean slate)
 clean:
-	docker-compose down -v --remove-orphans
+	docker compose down -v --remove-orphans
 	docker system prune -f
 	sudo rm -rf grafana/data prometheus/data postgres/data redis/data
 
 # View logs from analytics app
 logs:
-	docker-compose logs -f analytics-demo
+	docker compose logs -f analytics-demo
 
 # View logs from all services
 logs-all:
-	docker-compose logs -f
+	docker compose logs -f
 
 # Check service health
 health:
@@ -147,7 +147,7 @@ test:
 check-deps:
 	@echo "Checking dependencies..."
 	@which docker >/dev/null || (echo "❌ Docker not found" && exit 1)
-	@which docker-compose >/dev/null || (echo "❌ Docker Compose not found" && exit 1)
+	@which docker compose >/dev/null || (echo "❌ Docker Compose not found" && exit 1)
 	@which curl >/dev/null || (echo "❌ curl not found" && exit 1)
 	@echo "✅ All dependencies found"
 
