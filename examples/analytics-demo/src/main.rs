@@ -17,14 +17,12 @@ mod database;
 mod generators;
 mod metrics;
 mod models;
-mod validation;
 mod workers;
 
 use config::Config;
 use database::RedisCache;
 use generators::DataGenerator;
 use metrics::AppMetrics;
-use validation::DataValidator;
 use workers::{
     QuerySimulatorWorker, CacheWarmupWorker, EventSimulatorWorker,
     SystemMonitorWorker, OrgIdCache
@@ -36,7 +34,6 @@ struct AppState {
     metrics: Arc<AppMetrics>,
     generator: Arc<DataGenerator>,
     org_cache: Arc<OrgIdCache>,
-    validator: Arc<DataValidator>,
     config: Arc<Config>,
 }
 
@@ -54,7 +51,6 @@ async fn main() -> Result<()> {
     info!("  - Organizations: {}", config.organizations);
     info!("  - Max workers: {}", config.max_workers);
     info!("  - Redis pool size: {}", config.redis_pool_size);
-    info!("  - Validation sample rate: {:.1}%", config.validation_sample_rate * 100.0);
     info!("  - Mode: Redis-only (no Postgres in hot path)");
 
     // Initialize Redis cache
@@ -62,7 +58,6 @@ async fn main() -> Result<()> {
     let metrics = Arc::new(AppMetrics::new());
     let generator = Arc::new(DataGenerator::new());
     let org_cache = Arc::new(OrgIdCache::new());
-    let validator = Arc::new(DataValidator::new(config.validation_sample_rate, metrics.clone()));
 
     // Initialize synthetic org/user data (no DB needed)
     info!("Initializing synthetic organization data...");
@@ -73,7 +68,6 @@ async fn main() -> Result<()> {
         metrics: metrics.clone(),
         generator: generator.clone(),
         org_cache: org_cache.clone(),
-        validator: validator.clone(),
         config: Arc::new(config.clone()),
     };
 
@@ -179,7 +173,6 @@ async fn start_query_simulator(state: AppState) {
         state.metrics,
         state.generator.clone(),
         state.org_cache,
-        state.validator,
     );
 
     // Wait for cache warmup

@@ -1,5 +1,5 @@
 # Multi-stage development Dockerfile for better caching
-FROM rust:1.90 AS dependencies
+FROM rust:1.90 as dependencies
 
 WORKDIR /usr/src/app
 

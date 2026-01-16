@@ -16,13 +16,12 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::metrics::AppMetrics;
-use crate::validation::DataValidator;
 use crate::{
     config::Config,
     generators::DataGenerator,
     models::{
         AnalyticsOverview, Event, EventTypeDistribution, HourlyMetrics,
-        PagePerformance, TopPage, UserActivity
+        Organization, PagePerformance, TopPage, User, UserActivity
     },
 };
 
@@ -569,54 +568,6 @@ impl RedisCache {
                 Err(e.into())
             }
         }
-    }
-
-    /// Set a value and optionally validate by reading it back.
-    /// Validation is performed based on the validator's sample rate.
-    pub async fn set_and_validate<T>(
-        &self,
-        key: &str,
-        value: &T,
-        ttl_seconds: u64,
-        metrics: &AppMetrics,
-        validator: &DataValidator,
-        data_type: &str,
-    ) -> Result<()>
-    where
-        T: serde::Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
-    {
-        let start = Instant::now();
-        let mut conn = self.get_conn();
-        let json_str = serde_json::to_string(value)?;
-
-        match conn.set_ex::<_, _, ()>(key, json_str.clone(), ttl_seconds).await {
-            Ok(_) => {
-                metrics.record_cache_operation("set", "success", start.elapsed().as_secs_f64());
-            }
-            Err(e) => {
-                error!("Redis SET error for key {}: {}", key, e);
-                metrics.record_cache_operation("set", "error", start.elapsed().as_secs_f64());
-                return Err(e.into());
-            }
-        }
-
-        // Validate by reading back (based on sample rate)
-        if validator.should_validate() {
-            let mut read_conn = self.get_conn();
-            match read_conn.get::<_, Option<String>>(key).await {
-                Ok(Some(retrieved_json)) => {
-                    let _ = validator.validate_json_str(data_type, &json_str, &retrieved_json);
-                }
-                Ok(None) => {
-                    validator.record_not_found(data_type);
-                }
-                Err(_) => {
-                    validator.record_read_error(data_type);
-                }
-            }
-        }
-
-        Ok(())
     }
 
     /// Batch set multiple keys using Redis pipelining

@@ -57,9 +57,4 @@ pub struct Config {
     /// Number of time buckets for hourly analytics (24 hours = 24 buckets)
     #[clap(long, env = "TIME_BUCKETS", default_value = "24")]
     pub time_buckets: u32,
-
-    /// Data validation sample rate (0.0 to 1.0). At high load, only this fraction
-    /// of operations will be validated. Set to 1.0 for full validation, 0.01 for 1%.
-    #[clap(long, env = "VALIDATION_SAMPLE_RATE", default_value = "0.01")]
-    pub validation_sample_rate: f64,
 }

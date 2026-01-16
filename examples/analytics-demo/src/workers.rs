@@ -21,7 +21,6 @@ use crate::{
         AnalyticsOverview, EventTypeDistribution, HourlyMetrics,
         PagePerformance, TopPage, UserActivity,
     },
-    validation::DataValidator,
 };
 use crate::config::Config;
 
@@ -232,7 +231,6 @@ pub struct QuerySimulatorWorker {
     metrics: Arc<AppMetrics>,
     generator: Arc<DataGenerator>,
     org_cache: Arc<OrgIdCache>,
-    validator: Arc<DataValidator>,
 }
 
 impl QuerySimulatorWorker {
@@ -241,14 +239,12 @@ impl QuerySimulatorWorker {
         metrics: Arc<AppMetrics>,
         generator: Arc<DataGenerator>,
         org_cache: Arc<OrgIdCache>,
-        validator: Arc<DataValidator>,
     ) -> Self {
         Self {
             cache,
             metrics,
             generator,
             org_cache,
-            validator,
         }
     }
 
@@ -263,10 +259,9 @@ impl QuerySimulatorWorker {
             let metrics = self.metrics.clone();
             let generator = self.generator.clone();
             let org_cache = self.org_cache.clone();
-            let validator = self.validator.clone();
 
             tokio::spawn(async move {
-                let worker = QuerySimulatorWorker { cache, metrics, generator, org_cache, validator };
+                let worker = QuerySimulatorWorker { cache, metrics, generator, org_cache };
                 worker.run_worker(worker_id).await;
             });
         }
@@ -336,17 +331,15 @@ impl QuerySimulatorWorker {
     async fn get_analytics_overview(&self, org_id: Uuid, hours: i32) -> Result<bool> {
         let cache_key = self.generator.cache_key_overview(org_id, hours as u32);
 
-        match self.cache.get::<AnalyticsOverview>(&cache_key, &self.metrics).await {
+        match self.cache.get::<serde_json::Value>(&cache_key, &self.metrics).await {
             Ok(Some(_)) => return Ok(true),
             Ok(None) => {}
             Err(e) => debug!("Cache get error: {}", e),
         }
 
-        // Cache miss - generate synthetic data and cache it with validation
+        // Cache miss - generate synthetic data and cache it (NO DB QUERY)
         let data = SyntheticDataGenerator::analytics_overview(org_id, hours);
-        if let Err(e) = self.cache.set_and_validate(
-            &cache_key, &data, 900, &self.metrics, &self.validator, "analytics_overview"
-        ).await {
+        if let Err(e) = self.cache.set(&cache_key, &data, 900, &self.metrics).await {
             debug!("Cache set error: {}", e);
         }
 
@@ -357,16 +350,14 @@ impl QuerySimulatorWorker {
         let hour = Utc::now() - Duration::hours(hour_offset as i64);
         let cache_key = self.generator.cache_key_hourly(org_id, hour);
 
-        match self.cache.get::<HourlyMetrics>(&cache_key, &self.metrics).await {
+        match self.cache.get::<serde_json::Value>(&cache_key, &self.metrics).await {
             Ok(Some(_)) => return Ok(true),
             Ok(None) => {}
             Err(e) => debug!("Cache get error: {}", e),
         }
 
         let data = SyntheticDataGenerator::hourly_metrics(org_id, hour_offset);
-        if let Err(e) = self.cache.set_and_validate(
-            &cache_key, &data, 3600, &self.metrics, &self.validator, "hourly_metrics"
-        ).await {
+        if let Err(e) = self.cache.set(&cache_key, &data, 3600, &self.metrics).await {
             debug!("Cache set error: {}", e);
         }
 
@@ -376,16 +367,14 @@ impl QuerySimulatorWorker {
     async fn get_top_pages(&self, org_id: Uuid) -> Result<bool> {
         let cache_key = self.generator.cache_key_top_pages(org_id, 24);
 
-        match self.cache.get::<Vec<TopPage>>(&cache_key, &self.metrics).await {
+        match self.cache.get::<Vec<serde_json::Value>>(&cache_key, &self.metrics).await {
             Ok(Some(_)) => return Ok(true),
             Ok(None) => {}
             Err(e) => debug!("Cache get error: {}", e),
         }
 
         let data = SyntheticDataGenerator::top_pages();
-        if let Err(e) = self.cache.set_and_validate(
-            &cache_key, &data, 1200, &self.metrics, &self.validator, "top_pages"
-        ).await {
+        if let Err(e) = self.cache.set(&cache_key, &data, 1200, &self.metrics).await {
             debug!("Cache set error: {}", e);
         }
 
@@ -395,16 +384,14 @@ impl QuerySimulatorWorker {
     async fn get_event_distribution(&self, org_id: Uuid) -> Result<bool> {
         let cache_key = self.generator.cache_key_event_distribution(org_id, "24h");
 
-        match self.cache.get::<EventTypeDistribution>(&cache_key, &self.metrics).await {
+        match self.cache.get::<serde_json::Value>(&cache_key, &self.metrics).await {
             Ok(Some(_)) => return Ok(true),
             Ok(None) => {}
             Err(e) => debug!("Cache get error: {}", e),
         }
 
         let data = SyntheticDataGenerator::event_distribution(org_id);
-        if let Err(e) = self.cache.set_and_validate(
-            &cache_key, &data, 900, &self.metrics, &self.validator, "event_distribution"
-        ).await {
+        if let Err(e) = self.cache.set(&cache_key, &data, 900, &self.metrics).await {
             debug!("Cache set error: {}", e);
         }
 
@@ -420,16 +407,14 @@ impl QuerySimulatorWorker {
         let user_id = user_ids[StdRng::from_entropy().gen_range(0..user_ids.len())];
         let cache_key = self.generator.cache_key_user_activity(user_id);
 
-        match self.cache.get::<UserActivity>(&cache_key, &self.metrics).await {
+        match self.cache.get::<serde_json::Value>(&cache_key, &self.metrics).await {
             Ok(Some(_)) => return Ok(true),
             Ok(None) => {}
             Err(e) => debug!("Cache get error: {}", e),
         }
 
         let data = SyntheticDataGenerator::user_activity(user_id, org_id);
-        if let Err(e) = self.cache.set_and_validate(
-            &cache_key, &data, 1800, &self.metrics, &self.validator, "user_activity"
-        ).await {
+        if let Err(e) = self.cache.set(&cache_key, &data, 1800, &self.metrics).await {
             debug!("Cache set error: {}", e);
         }
 
@@ -442,16 +427,14 @@ impl QuerySimulatorWorker {
         let page_url = format!("https://app.example.com{}", page);
         let cache_key = self.generator.cache_key_page(org_id, &page_url);
 
-        match self.cache.get::<PagePerformance>(&cache_key, &self.metrics).await {
+        match self.cache.get::<serde_json::Value>(&cache_key, &self.metrics).await {
             Ok(Some(_)) => return Ok(true),
             Ok(None) => {}
             Err(e) => debug!("Cache get error: {}", e),
         }
 
         let data = SyntheticDataGenerator::page_performance(org_id, &page_url);
-        if let Err(e) = self.cache.set_and_validate(
-            &cache_key, &data, 1800, &self.metrics, &self.validator, "page_performance"
-        ).await {
+        if let Err(e) = self.cache.set(&cache_key, &data, 1800, &self.metrics).await {
             debug!("Cache set error: {}", e);
         }
 
@@ -467,7 +450,6 @@ impl QuerySimulatorWorker {
             Err(e) => debug!("Cache get error: {}", e),
         }
 
-        // Realtime stats use serde_json::Value, so use regular set
         let data = SyntheticDataGenerator::realtime_stats(org_id);
         if let Err(e) = self.cache.set(&cache_key, &data, 60, &self.metrics).await {
             debug!("Cache set error: {}", e);
@@ -749,9 +731,6 @@ impl SystemMonitorWorker {
 
         // Log live latency stats
         self.metrics.log_live_latency();
-
-        // Log live validation stats
-        self.metrics.log_live_validation();
 
         Ok(())
     }

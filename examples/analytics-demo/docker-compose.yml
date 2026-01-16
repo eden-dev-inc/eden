@@ -40,11 +40,7 @@ services:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/analytics
       - REDIS_URL=redis://host.docker.internal:6366
       - BIND_ADDRESS=0.0.0.0:3000
-      - MAX_WORKERS=${MAX_WORKERS:-2000}
-      - REDIS_POOL_SIZE=${REDIS_POOL_SIZE:-1000}
-      - QUERIES_PER_SECOND=${QUERIES_PER_SECOND:-100000}
-      - EVENTS_PER_SECOND=${EVENTS_PER_SECOND:-10000}
-      - VALIDATION_SAMPLE_RATE=${VALIDATION_SAMPLE_RATE:-0.01}
+      - MAX_WORKERS=${MAX_WORKERS:-8}
       - RUST_LOG=analytics_demo=info,sqlx=warn
     ports:
       - "3000:3000"
