@@ -7,7 +7,6 @@ pub mod database;
 pub mod generators;
 pub mod metrics;
 pub mod models;
-pub mod storage;
 pub mod validation;
 pub mod workers;
 
@@ -17,6 +16,5 @@ pub use database::{Database, RedisCache};
 pub use generators::DataGenerator;
 pub use metrics::AppMetrics;
 pub use models::*;
-pub use storage::{active_storage_type, create_storage, CacheStorage, Storage};
 pub use validation::DataValidator;
 pub use workers::*;

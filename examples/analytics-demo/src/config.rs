@@ -39,11 +39,11 @@ pub struct Config {
     pub cache_hit_target: u8,
 
     /// Maximum number of query workers to spawn
-    #[clap(long, env = "MAX_WORKERS", default_value = "50")]
+    #[clap(long, env = "MAX_WORKERS", default_value = "500")]
     pub max_workers: usize,
 
     /// Redis connection pool size for high concurrency
-    #[clap(long, env = "REDIS_POOL_SIZE", default_value = "10")]
+    #[clap(long, env = "REDIS_POOL_SIZE", default_value = "100")]
     pub redis_pool_size: u32,
 
     /// Default cache TTL in seconds for most queries
