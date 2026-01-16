@@ -2,7 +2,7 @@
 //
 // Enhanced metrics for monitoring 10K+ QPS analytics demo with diverse query types
 
-use prometheus::{CounterVec, Histogram, HistogramOpts, HistogramVec, IntCounter, IntGauge, Opts, Registry};
+use prometheus::{CounterVec, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, IntGauge, Opts, Registry};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::info;
 
@@ -191,6 +191,14 @@ pub struct AppMetrics {
     pub events_per_second: IntGauge,
     pub conversion_rate: prometheus::Gauge,
 
+    // Data validation metrics
+    pub validation_total: IntCounterVec,
+    pub validation_errors: IntCounterVec,
+
+    // Live validation tracking with AtomicU64 for console output
+    pub live_validation_count: AtomicU64,
+    pub live_validation_errors: AtomicU64,
+
     // Live latency tracking with AtomicU64 (values stored in nanoseconds)
     pub live_latency_sum_ns: AtomicU64,
     pub live_latency_count: AtomicU64,
@@ -314,6 +322,16 @@ impl AppMetrics {
             "Current conversion rate percentage"
         ).unwrap();
 
+        let validation_total = IntCounterVec::new(
+            Opts::new("validation_total", "Total data validations performed"),
+            &["data_type"]
+        ).unwrap();
+
+        let validation_errors = IntCounterVec::new(
+            Opts::new("validation_errors_total", "Data validation errors detected"),
+            &["data_type", "error_type"]
+        ).unwrap();
+
         // Register all metrics
         registry.register(Box::new(events_generated_total.clone())).unwrap();
         registry.register(Box::new(events_by_type.clone())).unwrap();
@@ -335,6 +353,8 @@ impl AppMetrics {
         registry.register(Box::new(operation_success_total.clone())).unwrap();
         registry.register(Box::new(cache_operation_duration.clone())).unwrap();
         registry.register(Box::new(db_operation_duration.clone())).unwrap();
+        registry.register(Box::new(validation_total.clone())).unwrap();
+        registry.register(Box::new(validation_errors.clone())).unwrap();
 
         Self {
             registry,
@@ -358,6 +378,11 @@ impl AppMetrics {
             active_organizations,
             events_per_second,
             conversion_rate,
+            validation_total,
+            validation_errors,
+            // Initialize atomic validation trackers
+            live_validation_count: AtomicU64::new(0),
+            live_validation_errors: AtomicU64::new(0),
             // Initialize atomic latency trackers
             live_latency_sum_ns: AtomicU64::new(0),
             live_latency_count: AtomicU64::new(0),
@@ -414,6 +439,41 @@ impl AppMetrics {
 
     pub fn record_db_operation(&self, query_type: &str, result: &str, duration: f64) {
         self.db_operation_duration.with_label_values(&[query_type, result]).observe(duration);
+    }
+
+    pub fn record_validation_success(&self, data_type: &str) {
+        self.validation_total.with_label_values(&[data_type]).inc();
+        self.live_validation_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_validation_error(&self, data_type: &str, error_type: &str) {
+        self.validation_total.with_label_values(&[data_type]).inc();
+        self.validation_errors.with_label_values(&[data_type, error_type]).inc();
+        self.live_validation_count.fetch_add(1, Ordering::Relaxed);
+        self.live_validation_errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get and reset live validation stats, returning (count, errors)
+    pub fn get_and_reset_live_validation(&self) -> (u64, u64) {
+        let count = self.live_validation_count.swap(0, Ordering::Relaxed);
+        let errors = self.live_validation_errors.swap(0, Ordering::Relaxed);
+        (count, errors)
+    }
+
+    /// Log live validation stats
+    pub fn log_live_validation(&self) {
+        let (count, errors) = self.get_and_reset_live_validation();
+        if count > 0 {
+            let success_rate = if count > 0 {
+                ((count - errors) as f64 / count as f64) * 100.0
+            } else {
+                100.0
+            };
+            info!(
+                "Validation: {} checked | {} errors | {:.2}% success rate",
+                count, errors, success_rate
+            );
+        }
     }
 
     /// Record a request latency (in nanoseconds) using atomic operations

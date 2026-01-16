@@ -75,7 +75,7 @@ pub struct Event {
 }
 
 /// AnalyticsOverview provides high-level metrics for dashboard display
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AnalyticsOverview {
     pub organization_id: Uuid,
     pub total_events: i64,
@@ -87,7 +87,7 @@ pub struct AnalyticsOverview {
 }
 
 /// TopPage represents popular pages or screens by traffic volume
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TopPage {
     pub url: String,
     pub views: i64,
@@ -104,7 +104,7 @@ pub struct FunnelStep {
 
 /// HourlyMetrics tracks time-series analytics per hour
 /// Used for granular time-based caching (creates many cache keys)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HourlyMetrics {
     pub organization_id: Uuid,
     pub hour: DateTime<Utc>,
@@ -133,7 +133,7 @@ pub struct DailyMetrics {
 
 /// UserActivity summarizes a specific user's behavior
 /// Enables per-user caching for user profile queries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserActivity {
     pub user_id: Uuid,
     pub organization_id: Uuid,
@@ -147,7 +147,7 @@ pub struct UserActivity {
 
 /// PagePerformance tracks individual page/URL metrics
 /// Creates cache entries per page per organization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PagePerformance {
     pub organization_id: Uuid,
     pub page_url: String,
@@ -160,7 +160,7 @@ pub struct PagePerformance {
 
 /// EventTypeDistribution shows breakdown of event types
 /// Cached per org for quick dashboard loading
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventTypeDistribution {
     pub organization_id: Uuid,
     pub page_views: i64,
