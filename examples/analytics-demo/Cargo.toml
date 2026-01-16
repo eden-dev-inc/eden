@@ -3,6 +3,18 @@ name = "analytics-demo"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["storage-json"]
+storage-json = []       # JSON strings via SET/GET (default)
+storage-hash = []       # Redis HASH for structured data
+storage-list = []       # Redis LIST for time-series/bounded collections
+storage-redisjson = []  # RedisJSON module (JSON.SET/JSON.GET)
+storage-zset = []       # Redis Sorted Sets for rankings/leaderboards
+storage-stream = []     # Redis Streams for event sourcing
+storage-hll = []        # HyperLogLog for cardinality estimation
+storage-bitmap = []     # Bitmaps for compact boolean tracking
+storage-bloom = []      # Bloom Filters (RedisBloom module)
+
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid"] }

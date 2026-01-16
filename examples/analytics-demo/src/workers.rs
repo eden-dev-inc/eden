@@ -6,7 +6,7 @@
 
 use anyhow::Result;
 use chrono::{Duration, Utc};
-use rand::{rngs::StdRng, SeedableRng, Rng};
+use rand::{Rng, thread_rng};
 use std::{sync::Arc, time::Instant};
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration as TokioDuration};
@@ -66,8 +66,8 @@ impl OrgIdCache {
         if org_ids.is_empty() {
             return None;
         }
-        let mut rng = StdRng::from_entropy();
-        Some(org_ids[rng.gen_range(0..org_ids.len())])
+        let idx = thread_rng().gen_range(0..org_ids.len());
+        Some(org_ids[idx])
     }
 
     pub async fn get_org_ids(&self) -> Vec<Uuid> {
@@ -86,7 +86,7 @@ pub struct SyntheticDataGenerator;
 impl SyntheticDataGenerator {
     /// Generate realistic-looking analytics overview
     pub fn analytics_overview(org_id: Uuid, hours: i32) -> AnalyticsOverview {
-        let mut rng = StdRng::from_entropy();
+        let mut rng = thread_rng();
         let base_events = rng.gen_range(10000..100000) * (hours as i64) / 24;
 
         // Add variation to percentages (±20% of base rate)
@@ -109,7 +109,7 @@ impl SyntheticDataGenerator {
 
     /// Generate hourly metrics
     pub fn hourly_metrics(org_id: Uuid, hour_offset: i32) -> HourlyMetrics {
-        let mut rng = StdRng::from_entropy();
+        let mut rng = thread_rng();
         let hour = Utc::now() - Duration::hours(hour_offset as i64);
 
         // Simulate realistic daily patterns with gradual peaks
@@ -144,7 +144,7 @@ impl SyntheticDataGenerator {
 
     /// Generate top pages list
     pub fn top_pages() -> Vec<TopPage> {
-        let mut rng = StdRng::from_entropy();
+        let mut rng = thread_rng();
         let pages = [
             "/dashboard", "/analytics", "/reports", "/settings",
             "/users", "/billing", "/integrations", "/help",
@@ -163,7 +163,7 @@ impl SyntheticDataGenerator {
 
     /// Generate event type distribution
     pub fn event_distribution(org_id: Uuid) -> EventTypeDistribution {
-        let mut rng = StdRng::from_entropy();
+        let mut rng = thread_rng();
         let page_views = rng.gen_range(50000..200000);
         let clicks = rng.gen_range(20000..80000);
         let conversions = rng.gen_range(1000..5000);
@@ -183,7 +183,7 @@ impl SyntheticDataGenerator {
 
     /// Generate user activity
     pub fn user_activity(user_id: Uuid, org_id: Uuid) -> UserActivity {
-        let mut rng = StdRng::from_entropy();
+        let mut rng = thread_rng();
 
         UserActivity {
             user_id,
@@ -199,7 +199,7 @@ impl SyntheticDataGenerator {
 
     /// Generate page performance
     pub fn page_performance(org_id: Uuid, page_url: &str) -> PagePerformance {
-        let mut rng = StdRng::from_entropy();
+        let mut rng = thread_rng();
         let views = rng.gen_range(1000..50000);
 
         PagePerformance {
@@ -215,7 +215,7 @@ impl SyntheticDataGenerator {
 
     /// Generate realtime stats
     pub fn realtime_stats(org_id: Uuid) -> serde_json::Value {
-        let mut rng = StdRng::from_entropy();
+        let mut rng = thread_rng();
         serde_json::json!({
             "organization_id": org_id,
             "current_active_users": rng.gen_range(10..500),
@@ -292,14 +292,17 @@ impl QuerySimulatorWorker {
 
     /// Execute diverse query types with weighted distribution
     async fn execute_diverse_query(&self, org_id: Uuid) -> Result<()> {
-        let mut rng = StdRng::from_entropy();
-        let query_type = rng.gen_range(0..100);
+        // Generate random values up-front before any await points
+        // to avoid holding non-Send ThreadRng across await
+        let (query_type, hour_offset) = {
+            let mut rng = thread_rng();
+            (rng.gen_range(0..100), rng.gen_range(0..24))
+        };
 
         let start = Instant::now();
         let result = match query_type {
             0..=39 => self.get_analytics_overview(org_id, 24).await,
             40..=59 => {
-                let hour_offset = rng.gen_range(0..24);
                 self.get_hourly_metrics(org_id, hour_offset).await
             }
             60..=69 => self.get_top_pages(org_id).await,
@@ -417,7 +420,7 @@ impl QuerySimulatorWorker {
             return Ok(false);
         }
 
-        let user_id = user_ids[StdRng::from_entropy().gen_range(0..user_ids.len())];
+        let user_id = user_ids[thread_rng().gen_range(0..user_ids.len())];
         let cache_key = self.generator.cache_key_user_activity(user_id);
 
         match self.cache.get::<UserActivity>(&cache_key, &self.metrics).await {
@@ -438,7 +441,7 @@ impl QuerySimulatorWorker {
 
     async fn get_random_page_performance(&self, org_id: Uuid) -> Result<bool> {
         let pages = self.generator.get_popular_pages();
-        let page = pages[StdRng::from_entropy().gen_range(0..pages.len())];
+        let page = pages[thread_rng().gen_range(0..pages.len())];
         let page_url = format!("https://app.example.com{}", page);
         let cache_key = self.generator.cache_key_page(org_id, &page_url);
 
@@ -577,7 +580,7 @@ impl CacheWarmupWorker {
                 // Rolling window metrics
                 for minutes in [5, 15, 30, 60] {
                     let key = self.generator.cache_key_rolling_window(org_id, "events", minutes);
-                    let data = serde_json::json!({"count": StdRng::from_entropy().gen_range(100..10000), "window_minutes": minutes});
+                    let data = serde_json::json!({"count": thread_rng().gen_range(100..10000), "window_minutes": minutes});
                     if let Ok(json) = serde_json::to_string(&data) {
                         batch_entries.push((key, json, (minutes * 60) as u64));
                     }
@@ -693,26 +696,29 @@ impl EventSimulatorWorker {
 
         // Batch increment counters for simulated events
         let mut counter_keys: Vec<String> = Vec::with_capacity(events_per_second as usize);
-        let mut rng = StdRng::from_entropy();
 
-        for _ in 0..events_per_second {
-            let org_id = org_ids[rng.gen_range(0..org_ids.len())];
-            counter_keys.push(self.generator.cache_key_realtime_counter(org_id, "minute"));
+        // Scope the RNG to avoid holding it across await points
+        {
+            let mut rng = thread_rng();
+            for _ in 0..events_per_second {
+                let org_id = org_ids[rng.gen_range(0..org_ids.len())];
+                counter_keys.push(self.generator.cache_key_realtime_counter(org_id, "minute"));
 
-            // Record event metrics
-            let event_types = ["page_view", "click", "conversion", "sign_up", "purchase"];
-            let weights = [60, 28, 8, 3, 1];
-            let total_weight: i32 = weights.iter().sum();
-            let mut roll = rng.gen_range(0..total_weight);
-            let mut selected_type = event_types[0];
-            for (i, &weight) in weights.iter().enumerate() {
-                if roll < weight {
-                    selected_type = event_types[i];
-                    break;
+                // Record event metrics
+                let event_types = ["page_view", "click", "conversion", "sign_up", "purchase"];
+                let weights = [60, 28, 8, 3, 1];
+                let total_weight: i32 = weights.iter().sum();
+                let mut roll = rng.gen_range(0..total_weight);
+                let mut selected_type = event_types[0];
+                for (i, &weight) in weights.iter().enumerate() {
+                    if roll < weight {
+                        selected_type = event_types[i];
+                        break;
+                    }
+                    roll -= weight;
                 }
-                roll -= weight;
+                self.metrics.record_event_generated(selected_type);
             }
-            self.metrics.record_event_generated(selected_type);
         }
 
         // Batch increment all counters via Redis pipeline
