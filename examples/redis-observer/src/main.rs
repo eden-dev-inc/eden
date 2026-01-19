@@ -21,12 +21,13 @@
 //! # Controls
 //!     q / Ctrl+C         Quit
 //!     c                  Complete running migration
+//!     x                  Cancel running/paused migration
 //!     f                  Force coverage check now
 //!     v                  Toggle ops/sec chart
 //!     Tab                Toggle migration mode (BigBang / Canary)
 //!     s                  Start migration setup (connect to Eden API)
 //!     m                  Trigger migration
-//!     r                  Refresh migration status
+//!     r                  Refresh migration status (retry if cancelled/completed)
 //!     +/=                Increase canary traffic by 5% (canary mode only)
 //!     -                  Decrease canary traffic by 5% (canary mode only)
 
@@ -102,6 +103,18 @@ struct CompleteMigrationResponse {
     status: String,
     #[allow(dead_code)]
     message: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CancelMigrationResponse {
+    #[allow(dead_code)]
+    migration_id: String,
+    #[allow(dead_code)]
+    status: String,
+    #[allow(dead_code)]
+    cancelled_at: String,
+    #[allow(dead_code)]
+    reason: Option<String>,
 }
 
 // ============================================
@@ -280,6 +293,11 @@ impl MigrationState {
     fn can_complete(&self) -> bool {
         self.is_ready() && self.status == MigrationStatus::Running
     }
+
+    fn can_cancel(&self) -> bool {
+        self.is_ready()
+            && (self.status == MigrationStatus::Running || self.status == MigrationStatus::Paused)
+    }
 }
 
 fn parse_migration_status(status: Option<&str>) -> MigrationStatus {
@@ -329,6 +347,10 @@ enum ApiEvent {
     MigrationCompleted,
     /// Migration completion failed
     MigrationCompleteFailed(String),
+    /// Migration was manually cancelled
+    MigrationCancelled,
+    /// Migration cancellation failed
+    MigrationCancelFailed(String),
 }
 
 // ============================================
@@ -813,6 +835,48 @@ impl EdenApiClient {
             .json()
             .await
             .map_err(|e| format!("Failed to parse complete migration response: {}", e))
+    }
+
+    async fn cancel_migration(
+        &self,
+        migration_id: &str,
+        reason: Option<&str>,
+    ) -> Result<CancelMigrationResponse, String> {
+        let body = serde_json::json!({
+            "reason": reason.unwrap_or("Manual cancellation from TUI")
+        });
+
+        let url = format!(
+            "{}/api/v1/migrations/{}/cancel",
+            self.base_url, migration_id
+        );
+        let response = self
+            .client
+            .post(&url)
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.auth_token.as_ref().unwrap()),
+            )
+            .header("X-Org-Id", &self.org_id)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Cancel migration failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "Cancel migration failed ({}) POST {}: {}",
+                status, url, text
+            ));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse cancel migration response: {}", e))
     }
 
     async fn refresh_migration(
@@ -1483,6 +1547,27 @@ async fn complete_migration_task(
     }
 }
 
+async fn cancel_migration_task(
+    tx: mpsc::Sender<ApiEvent>,
+    auth_token: String,
+    org_id: String,
+    migration_id: String,
+    api_base: String,
+) {
+    let client = EdenApiClient::new(org_id, api_base).with_auth(auth_token);
+
+    match client.cancel_migration(&migration_id, None).await {
+        Ok(_) => {
+            let _ = tx.send(ApiEvent::MigrationCancelled).await;
+            // Also send status update to sync the UI
+            let _ = tx.send(ApiEvent::MigrationStatusUpdate(MigrationStatus::Cancelled)).await;
+        }
+        Err(e) => {
+            let _ = tx.send(ApiEvent::MigrationCancelFailed(e)).await;
+        }
+    }
+}
+
 // ============================================
 // Application Config and State
 // ============================================
@@ -1716,6 +1801,15 @@ impl App {
                     self.log_debug(format!("Complete failed: {}", err));
                     self.migration_state.last_error = Some(err);
                 }
+                ApiEvent::MigrationCancelled => {
+                    self.log_debug("Migration manually cancelled".to_string());
+                    self.migration_state.status = MigrationStatus::Cancelled;
+                    self.migration_state.last_error = None;
+                }
+                ApiEvent::MigrationCancelFailed(err) => {
+                    self.log_debug(format!("Cancel failed: {}", err));
+                    self.migration_state.last_error = Some(err);
+                }
             }
         }
     }
@@ -1792,6 +1886,19 @@ impl App {
 
             self.runtime
                 .spawn(complete_migration_task(tx, token, org_id, migration_id, api_base));
+        }
+    }
+
+    fn handle_cancel_key(&mut self) {
+        if self.migration_state.can_cancel() {
+            let tx = self.api_event_tx.clone();
+            let token = self.migration_state.auth_token.clone().unwrap();
+            let org_id = self.migration_state.org_id.clone();
+            let migration_id = self.migration_state.migration_id.clone().unwrap();
+            let api_base = self.migration_state.api_base.clone();
+
+            self.runtime
+                .spawn(cancel_migration_task(tx, token, org_id, migration_id, api_base));
         }
     }
 
@@ -2466,9 +2573,30 @@ fn draw_ui(f: &mut Frame, app: &App) {
         status_spans.push(Span::styled(" traffic  ", Style::default().fg(Color::DarkGray)));
     }
 
+    // Show complete when migration is running
+    if app.migration_state.can_complete() {
+        status_spans.push(Span::styled("c", Style::default().fg(Color::Green)));
+        status_spans.push(Span::styled(" complete  ", Style::default().fg(Color::DarkGray)));
+    }
+
+    // Show cancel when migration is running or paused
+    if app.migration_state.can_cancel() {
+        status_spans.push(Span::styled("x", Style::default().fg(Color::Red)));
+        status_spans.push(Span::styled(" cancel  ", Style::default().fg(Color::DarkGray)));
+    }
+
+    // Show refresh/retry - highlight when cancelled or completed to indicate retry is available
+    let can_retry = app.migration_state.status == MigrationStatus::Cancelled
+        || app.migration_state.status == MigrationStatus::Completed;
+    if can_retry {
+        status_spans.push(Span::styled("r", Style::default().fg(Color::Yellow)));
+        status_spans.push(Span::styled(" retry  ", Style::default().fg(Color::DarkGray)));
+    } else {
+        status_spans.push(Span::styled("r", Style::default().fg(Color::White)));
+        status_spans.push(Span::styled(" refresh  ", Style::default().fg(Color::DarkGray)));
+    }
+
     status_spans.extend(vec![
-        Span::styled("r", Style::default().fg(Color::White)),
-        Span::styled(" refresh  ", Style::default().fg(Color::DarkGray)),
         Span::styled("d", Style::default().fg(Color::White)),
         Span::styled(
             if app.show_debug { " debug" } else { " debug" },
@@ -2572,6 +2700,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match key.code {
                         KeyCode::Char('q') => app.should_quit = true,
                         KeyCode::Char('c') => app.handle_complete_key(),
+                        KeyCode::Char('x') => app.handle_cancel_key(),
                         KeyCode::Char('f') => app.force_coverage = true,
                         KeyCode::Char('v') => app.show_ops = !app.show_ops,
                         KeyCode::Char('d') => app.show_debug = !app.show_debug,
