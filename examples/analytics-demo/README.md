@@ -140,6 +140,60 @@ Key metrics exposed for monitoring migration impact:
    - Zero-downtime migration success
    - Performance recovery post-migration
 
+## Redis Command Type Features
+
+The application supports different Redis data types via Cargo feature flags. This allows you to test and benchmark different Redis command patterns:
+
+| Feature | Commands Used | Best For |
+|---------|---------------|----------|
+| `redis-string` (default) | `GET`/`SET` | General caching with JSON serialization |
+| `redis-json` | `JSON.GET`/`JSON.SET` | Native JSON support (requires Redis Stack) |
+| `redis-hash` | `HSET`/`HGET` | Structured data with field-level access |
+| `redis-list` | `LPUSH`/`LRANGE` | Time-series data, event logs, queues |
+| `redis-set` | `SADD`/`SMEMBERS` | Unique collections, deduplication |
+| `redis-sorted-set` | `ZADD`/`ZRANGE` | Leaderboards, ranked data, time-series with scores |
+
+### Using Feature Flags
+
+```bash
+# Default (String commands)
+cargo run
+
+# Use RedisJSON module (requires Redis Stack)
+cargo run --no-default-features --features redis-json
+
+# Use Hash commands for structured data
+cargo run --no-default-features --features redis-hash
+
+# Use Lists for queue-like caching
+cargo run --no-default-features --features redis-list
+
+# Use Sets for unique collections
+cargo run --no-default-features --features redis-set
+
+# Use Sorted Sets for leaderboards/ranked data
+cargo run --no-default-features --features redis-sorted-set
+```
+
+### Feature-Specific Methods
+
+Some features provide additional type-specific methods:
+
+**Lists** (`redis-list`):
+- `list_push()` - Append to list with max length
+- `list_get_all()` - Get all items in the list
+
+**Sets** (`redis-set`):
+- `set_add()` - Add a member to the set
+- `set_members()` - Get all members
+- `set_card()` - Get cardinality (count)
+
+**Sorted Sets** (`redis-sorted-set`):
+- `zset_add()` - Add member with custom score
+- `zset_top()` - Get top N members by score
+- `zset_range_by_score()` - Get members within score range
+- `zset_incr()` - Increment a member's score
+
 ## Development
 
 ### Local Development
@@ -150,6 +204,9 @@ cargo build
 
 # Run with custom config
 cargo run -- --events-per-second 50 --queries-per-second 100
+
+# Run with specific Redis command type
+cargo run --no-default-features --features redis-hash
 
 # Docker development
 make dev

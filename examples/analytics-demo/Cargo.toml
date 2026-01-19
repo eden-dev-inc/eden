@@ -3,6 +3,16 @@ name = "analytics-demo"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["redis-string"]
+# Redis command type features - enable one at a time
+redis-string = []      # Default: Uses GET/SET with JSON serialization
+redis-json = []        # Uses RedisJSON module (JSON.GET/JSON.SET)
+redis-list = []        # Uses LPUSH/RPUSH/LRANGE for queue-like caching
+redis-set = []         # Uses SADD/SMEMBERS for unique collections
+redis-sorted-set = []  # Uses ZADD/ZRANGE for ranked/scored data
+redis-hash = []        # Uses HSET/HGET/HGETALL for structured data
+
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid"] }

@@ -511,6 +511,10 @@ impl RedisCache {
         self.connections[idx].clone()
     }
 
+    // ============================================================
+    // String Commands (default) - Uses GET/SET with JSON serialization
+    // ============================================================
+    #[cfg(feature = "redis-string")]
     pub async fn get<T>(&self, key: &str, metrics: &AppMetrics) -> Result<Option<T>>
     where
         T: serde::de::DeserializeOwned,
@@ -522,7 +526,7 @@ impl RedisCache {
             Ok(value) => {
                 let duration = start.elapsed().as_secs_f64();
                 let result = if value.is_some() { "hit" } else { "miss" };
-                metrics.record_cache_operation("get", result, duration);
+                metrics.record_cache_operation("string_get", result, duration);
 
                 match value {
                     Some(json_str) => match serde_json::from_str(&json_str) {
@@ -537,12 +541,13 @@ impl RedisCache {
             }
             Err(e) => {
                 error!("Redis GET error for key {}: {}", key, e);
-                metrics.record_cache_operation("get", "error", start.elapsed().as_secs_f64());
+                metrics.record_cache_operation("string_get", "error", start.elapsed().as_secs_f64());
                 Err(e.into())
             }
         }
     }
 
+    #[cfg(feature = "redis-string")]
     pub async fn set<T>(
         &self,
         key: &str,
@@ -559,12 +564,623 @@ impl RedisCache {
 
         match conn.set_ex::<_, _, ()>(key, json_str, ttl_seconds).await {
             Ok(_) => {
-                metrics.record_cache_operation("set", "success", start.elapsed().as_secs_f64());
+                metrics.record_cache_operation("string_set", "success", start.elapsed().as_secs_f64());
                 Ok(())
             }
             Err(e) => {
                 error!("Redis SET error for key {}: {}", key, e);
-                metrics.record_cache_operation("set", "error", start.elapsed().as_secs_f64());
+                metrics.record_cache_operation("string_set", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    // ============================================================
+    // JSON Commands - Uses RedisJSON module (JSON.GET/JSON.SET)
+    // Requires Redis Stack or RedisJSON module installed
+    // ============================================================
+    #[cfg(feature = "redis-json")]
+    pub async fn get<T>(&self, key: &str, metrics: &AppMetrics) -> Result<Option<T>>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        // JSON.GET key $ returns the value at the root path
+        match redis::cmd("JSON.GET")
+            .arg(key)
+            .arg("$")
+            .query_async::<Option<String>>(&mut conn)
+            .await
+        {
+            Ok(value) => {
+                let duration = start.elapsed().as_secs_f64();
+                let result = if value.is_some() { "hit" } else { "miss" };
+                metrics.record_cache_operation("json_get", result, duration);
+
+                match value {
+                    Some(json_str) => {
+                        // JSON.GET with $ path returns an array, extract first element
+                        let parsed: Vec<T> = serde_json::from_str(&json_str)?;
+                        Ok(parsed.into_iter().next())
+                    }
+                    None => Ok(None),
+                }
+            }
+            Err(e) => {
+                error!("Redis JSON.GET error for key {}: {}", key, e);
+                metrics.record_cache_operation("json_get", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    #[cfg(feature = "redis-json")]
+    pub async fn set<T>(
+        &self,
+        key: &str,
+        value: &T,
+        ttl_seconds: u64,
+        metrics: &AppMetrics,
+    ) -> Result<()>
+    where
+        T: serde::Serialize,
+    {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+        let json_str = serde_json::to_string(value)?;
+
+        // JSON.SET key $ value
+        match redis::cmd("JSON.SET")
+            .arg(key)
+            .arg("$")
+            .arg(&json_str)
+            .query_async::<()>(&mut conn)
+            .await
+        {
+            Ok(_) => {
+                // Set TTL separately using EXPIRE
+                let _: () = conn.expire(key, ttl_seconds as i64).await?;
+                metrics.record_cache_operation("json_set", "success", start.elapsed().as_secs_f64());
+                Ok(())
+            }
+            Err(e) => {
+                error!("Redis JSON.SET error for key {}: {}", key, e);
+                metrics.record_cache_operation("json_set", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    // ============================================================
+    // Hash Commands - Uses HSET/HGET/HGETALL for structured data
+    // Stores each field of the struct as a hash field
+    // ============================================================
+    #[cfg(feature = "redis-hash")]
+    pub async fn get<T>(&self, key: &str, metrics: &AppMetrics) -> Result<Option<T>>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        // HGET the serialized JSON from "data" field
+        match conn.hget::<_, _, Option<String>>(key, "data").await {
+            Ok(value) => {
+                let duration = start.elapsed().as_secs_f64();
+                let result = if value.is_some() { "hit" } else { "miss" };
+                metrics.record_cache_operation("hash_get", result, duration);
+
+                match value {
+                    Some(json_str) => match serde_json::from_str(&json_str) {
+                        Ok(v) => Ok(Some(v)),
+                        Err(e) => {
+                            error!("JSON parse error for key {}: {}", key, e);
+                            Err(e.into())
+                        }
+                    },
+                    None => Ok(None),
+                }
+            }
+            Err(e) => {
+                error!("Redis HGET error for key {}: {}", key, e);
+                metrics.record_cache_operation("hash_get", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    #[cfg(feature = "redis-hash")]
+    pub async fn set<T>(
+        &self,
+        key: &str,
+        value: &T,
+        ttl_seconds: u64,
+        metrics: &AppMetrics,
+    ) -> Result<()>
+    where
+        T: serde::Serialize,
+    {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+        let json_str = serde_json::to_string(value)?;
+
+        // HSET key "data" json_str
+        match conn.hset::<_, _, _, ()>(key, "data", &json_str).await {
+            Ok(_) => {
+                // Set TTL using EXPIRE
+                let _: () = conn.expire(key, ttl_seconds as i64).await?;
+                metrics.record_cache_operation("hash_set", "success", start.elapsed().as_secs_f64());
+                Ok(())
+            }
+            Err(e) => {
+                error!("Redis HSET error for key {}: {}", key, e);
+                metrics.record_cache_operation("hash_set", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    // ============================================================
+    // List Commands - Uses LPUSH/LRANGE for queue-like caching
+    // Useful for time-series data or event logs
+    // ============================================================
+    #[cfg(feature = "redis-list")]
+    pub async fn get<T>(&self, key: &str, metrics: &AppMetrics) -> Result<Option<T>>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        // LINDEX key 0 - get the most recent item (head of list)
+        match conn.lindex::<_, Option<String>>(key, 0).await {
+            Ok(value) => {
+                let duration = start.elapsed().as_secs_f64();
+                let result = if value.is_some() { "hit" } else { "miss" };
+                metrics.record_cache_operation("list_get", result, duration);
+
+                match value {
+                    Some(json_str) => match serde_json::from_str(&json_str) {
+                        Ok(v) => Ok(Some(v)),
+                        Err(e) => {
+                            error!("JSON parse error for key {}: {}", key, e);
+                            Err(e.into())
+                        }
+                    },
+                    None => Ok(None),
+                }
+            }
+            Err(e) => {
+                error!("Redis LINDEX error for key {}: {}", key, e);
+                metrics.record_cache_operation("list_get", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    #[cfg(feature = "redis-list")]
+    pub async fn set<T>(
+        &self,
+        key: &str,
+        value: &T,
+        ttl_seconds: u64,
+        metrics: &AppMetrics,
+    ) -> Result<()>
+    where
+        T: serde::Serialize,
+    {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+        let json_str = serde_json::to_string(value)?;
+
+        // Delete existing list and push new value
+        let mut pipe = redis::pipe();
+        pipe.del(key).ignore();
+        pipe.lpush(key, &json_str).ignore();
+        pipe.expire(key, ttl_seconds as i64).ignore();
+
+        match pipe.query_async::<()>(&mut conn).await {
+            Ok(_) => {
+                metrics.record_cache_operation("list_set", "success", start.elapsed().as_secs_f64());
+                Ok(())
+            }
+            Err(e) => {
+                error!("Redis LPUSH error for key {}: {}", key, e);
+                metrics.record_cache_operation("list_set", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    /// List-specific: Push to list without clearing (append to history)
+    #[cfg(feature = "redis-list")]
+    pub async fn list_push<T>(
+        &self,
+        key: &str,
+        value: &T,
+        max_len: i64,
+        ttl_seconds: u64,
+        metrics: &AppMetrics,
+    ) -> Result<()>
+    where
+        T: serde::Serialize,
+    {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+        let json_str = serde_json::to_string(value)?;
+
+        let mut pipe = redis::pipe();
+        pipe.lpush(key, &json_str).ignore();
+        pipe.ltrim(key, 0, (max_len - 1) as isize).ignore(); // Keep only max_len items
+        pipe.expire(key, ttl_seconds as i64).ignore();
+
+        match pipe.query_async::<()>(&mut conn).await {
+            Ok(_) => {
+                metrics.record_cache_operation("list_push", "success", start.elapsed().as_secs_f64());
+                Ok(())
+            }
+            Err(e) => {
+                error!("Redis list_push error for key {}: {}", key, e);
+                metrics.record_cache_operation("list_push", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    /// List-specific: Get all items in the list
+    #[cfg(feature = "redis-list")]
+    pub async fn list_get_all<T>(&self, key: &str, metrics: &AppMetrics) -> Result<Vec<T>>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        match conn.lrange::<_, Vec<String>>(key, 0, -1).await {
+            Ok(values) => {
+                let duration = start.elapsed().as_secs_f64();
+                let result = if !values.is_empty() { "hit" } else { "miss" };
+                metrics.record_cache_operation("list_get_all", result, duration);
+
+                let mut items = Vec::with_capacity(values.len());
+                for json_str in values {
+                    match serde_json::from_str(&json_str) {
+                        Ok(v) => items.push(v),
+                        Err(e) => {
+                            error!("JSON parse error in list for key {}: {}", key, e);
+                        }
+                    }
+                }
+                Ok(items)
+            }
+            Err(e) => {
+                error!("Redis LRANGE error for key {}: {}", key, e);
+                metrics.record_cache_operation("list_get_all", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    // ============================================================
+    // Set Commands - Uses SADD/SMEMBERS for unique collections
+    // Useful for tracking unique visitors, tags, etc.
+    // ============================================================
+    #[cfg(feature = "redis-set")]
+    pub async fn get<T>(&self, key: &str, metrics: &AppMetrics) -> Result<Option<T>>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        // For sets, we store the JSON in a single member for compatibility
+        match conn.smembers::<_, Vec<String>>(key).await {
+            Ok(members) => {
+                let duration = start.elapsed().as_secs_f64();
+                let result = if !members.is_empty() { "hit" } else { "miss" };
+                metrics.record_cache_operation("set_get", result, duration);
+
+                if let Some(json_str) = members.into_iter().next() {
+                    match serde_json::from_str(&json_str) {
+                        Ok(v) => Ok(Some(v)),
+                        Err(e) => {
+                            error!("JSON parse error for key {}: {}", key, e);
+                            Err(e.into())
+                        }
+                    }
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(e) => {
+                error!("Redis SMEMBERS error for key {}: {}", key, e);
+                metrics.record_cache_operation("set_get", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    #[cfg(feature = "redis-set")]
+    pub async fn set<T>(
+        &self,
+        key: &str,
+        value: &T,
+        ttl_seconds: u64,
+        metrics: &AppMetrics,
+    ) -> Result<()>
+    where
+        T: serde::Serialize,
+    {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+        let json_str = serde_json::to_string(value)?;
+
+        // Clear set and add new value
+        let mut pipe = redis::pipe();
+        pipe.del(key).ignore();
+        pipe.sadd(key, &json_str).ignore();
+        pipe.expire(key, ttl_seconds as i64).ignore();
+
+        match pipe.query_async::<()>(&mut conn).await {
+            Ok(_) => {
+                metrics.record_cache_operation("set_set", "success", start.elapsed().as_secs_f64());
+                Ok(())
+            }
+            Err(e) => {
+                error!("Redis SADD error for key {}: {}", key, e);
+                metrics.record_cache_operation("set_set", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Set-specific: Add a member to the set
+    #[cfg(feature = "redis-set")]
+    pub async fn set_add(
+        &self,
+        key: &str,
+        member: &str,
+        ttl_seconds: u64,
+        metrics: &AppMetrics,
+    ) -> Result<bool> {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        let mut pipe = redis::pipe();
+        pipe.sadd(key, member);
+        pipe.expire(key, ttl_seconds as i64).ignore();
+
+        match pipe.query_async::<(i32,)>(&mut conn).await {
+            Ok((added,)) => {
+                metrics.record_cache_operation("set_add", "success", start.elapsed().as_secs_f64());
+                Ok(added > 0)
+            }
+            Err(e) => {
+                error!("Redis SADD error for key {}: {}", key, e);
+                metrics.record_cache_operation("set_add", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Set-specific: Get all members of the set
+    #[cfg(feature = "redis-set")]
+    pub async fn set_members(&self, key: &str, metrics: &AppMetrics) -> Result<Vec<String>> {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        match conn.smembers::<_, Vec<String>>(key).await {
+            Ok(members) => {
+                let result = if !members.is_empty() { "hit" } else { "miss" };
+                metrics.record_cache_operation("set_members", result, start.elapsed().as_secs_f64());
+                Ok(members)
+            }
+            Err(e) => {
+                error!("Redis SMEMBERS error for key {}: {}", key, e);
+                metrics.record_cache_operation("set_members", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Set-specific: Get cardinality (number of members)
+    #[cfg(feature = "redis-set")]
+    pub async fn set_card(&self, key: &str, metrics: &AppMetrics) -> Result<i64> {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        match conn.scard::<_, i64>(key).await {
+            Ok(count) => {
+                metrics.record_cache_operation("set_card", "success", start.elapsed().as_secs_f64());
+                Ok(count)
+            }
+            Err(e) => {
+                error!("Redis SCARD error for key {}: {}", key, e);
+                metrics.record_cache_operation("set_card", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    // ============================================================
+    // Sorted Set Commands - Uses ZADD/ZRANGE for ranked/scored data
+    // Useful for leaderboards, time-series with scores, etc.
+    // ============================================================
+    #[cfg(feature = "redis-sorted-set")]
+    pub async fn get<T>(&self, key: &str, metrics: &AppMetrics) -> Result<Option<T>>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        // Get the highest scored member
+        match conn.zrevrange::<_, Vec<String>>(key, 0, 0).await {
+            Ok(members) => {
+                let duration = start.elapsed().as_secs_f64();
+                let result = if !members.is_empty() { "hit" } else { "miss" };
+                metrics.record_cache_operation("zset_get", result, duration);
+
+                if let Some(json_str) = members.into_iter().next() {
+                    match serde_json::from_str(&json_str) {
+                        Ok(v) => Ok(Some(v)),
+                        Err(e) => {
+                            error!("JSON parse error for key {}: {}", key, e);
+                            Err(e.into())
+                        }
+                    }
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(e) => {
+                error!("Redis ZREVRANGE error for key {}: {}", key, e);
+                metrics.record_cache_operation("zset_get", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    #[cfg(feature = "redis-sorted-set")]
+    pub async fn set<T>(
+        &self,
+        key: &str,
+        value: &T,
+        ttl_seconds: u64,
+        metrics: &AppMetrics,
+    ) -> Result<()>
+    where
+        T: serde::Serialize,
+    {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+        let json_str = serde_json::to_string(value)?;
+        let score = Utc::now().timestamp_millis() as f64;
+
+        // Clear and add with timestamp as score
+        let mut pipe = redis::pipe();
+        pipe.del(key).ignore();
+        pipe.zadd(key, &json_str, score).ignore();
+        pipe.expire(key, ttl_seconds as i64).ignore();
+
+        match pipe.query_async::<()>(&mut conn).await {
+            Ok(_) => {
+                metrics.record_cache_operation("zset_set", "success", start.elapsed().as_secs_f64());
+                Ok(())
+            }
+            Err(e) => {
+                error!("Redis ZADD error for key {}: {}", key, e);
+                metrics.record_cache_operation("zset_set", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Sorted set-specific: Add member with custom score
+    #[cfg(feature = "redis-sorted-set")]
+    pub async fn zset_add(
+        &self,
+        key: &str,
+        member: &str,
+        score: f64,
+        ttl_seconds: u64,
+        metrics: &AppMetrics,
+    ) -> Result<()> {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        let mut pipe = redis::pipe();
+        pipe.zadd(key, member, score).ignore();
+        pipe.expire(key, ttl_seconds as i64).ignore();
+
+        match pipe.query_async::<()>(&mut conn).await {
+            Ok(_) => {
+                metrics.record_cache_operation("zset_add", "success", start.elapsed().as_secs_f64());
+                Ok(())
+            }
+            Err(e) => {
+                error!("Redis ZADD error for key {}: {}", key, e);
+                metrics.record_cache_operation("zset_add", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Sorted set-specific: Get top N members by score (descending)
+    #[cfg(feature = "redis-sorted-set")]
+    pub async fn zset_top(
+        &self,
+        key: &str,
+        count: i64,
+        metrics: &AppMetrics,
+    ) -> Result<Vec<(String, f64)>> {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        match conn.zrevrange_withscores::<_, Vec<(String, f64)>>(key, 0, (count - 1) as isize).await {
+            Ok(members) => {
+                let result = if !members.is_empty() { "hit" } else { "miss" };
+                metrics.record_cache_operation("zset_top", result, start.elapsed().as_secs_f64());
+                Ok(members)
+            }
+            Err(e) => {
+                error!("Redis ZREVRANGE error for key {}: {}", key, e);
+                metrics.record_cache_operation("zset_top", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Sorted set-specific: Get members within score range
+    #[cfg(feature = "redis-sorted-set")]
+    pub async fn zset_range_by_score(
+        &self,
+        key: &str,
+        min: f64,
+        max: f64,
+        metrics: &AppMetrics,
+    ) -> Result<Vec<(String, f64)>> {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        match conn.zrangebyscore_withscores::<_, _, _, Vec<(String, f64)>>(key, min, max).await {
+            Ok(members) => {
+                let result = if !members.is_empty() { "hit" } else { "miss" };
+                metrics.record_cache_operation("zset_range", result, start.elapsed().as_secs_f64());
+                Ok(members)
+            }
+            Err(e) => {
+                error!("Redis ZRANGEBYSCORE error for key {}: {}", key, e);
+                metrics.record_cache_operation("zset_range", "error", start.elapsed().as_secs_f64());
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Sorted set-specific: Increment score of a member
+    #[cfg(feature = "redis-sorted-set")]
+    pub async fn zset_incr(
+        &self,
+        key: &str,
+        member: &str,
+        increment: f64,
+        ttl_seconds: u64,
+        metrics: &AppMetrics,
+    ) -> Result<f64> {
+        let start = Instant::now();
+        let mut conn = self.get_conn();
+
+        match conn.zincr::<_, _, _, f64>(key, member, increment).await {
+            Ok(new_score) => {
+                let _: () = conn.expire(key, ttl_seconds as i64).await?;
+                metrics.record_cache_operation("zset_incr", "success", start.elapsed().as_secs_f64());
+                Ok(new_score)
+            }
+            Err(e) => {
+                error!("Redis ZINCRBY error for key {}: {}", key, e);
+                metrics.record_cache_operation("zset_incr", "error", start.elapsed().as_secs_f64());
                 Err(e.into())
             }
         }
