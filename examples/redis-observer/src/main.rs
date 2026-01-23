@@ -22,6 +22,7 @@
 //!     q / Ctrl+C         Quit
 //!     c                  Complete running migration
 //!     x                  Cancel running/paused migration
+//!     b                  Rollback completed/failed/cancelled migration
 //!     f                  Force coverage check now
 //!     v                  Toggle ops/sec chart
 //!     Tab                Toggle migration mode (BigBang / Canary)
@@ -113,6 +114,18 @@ struct CancelMigrationResponse {
     status: String,
     #[allow(dead_code)]
     cancelled_at: String,
+    #[allow(dead_code)]
+    reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RollbackInterlayResponse {
+    #[allow(dead_code)]
+    migration_id: String,
+    interlay_id: String,
+    status: String,
+    #[allow(dead_code)]
+    rolled_back_at: String,
     #[allow(dead_code)]
     reason: Option<String>,
 }
@@ -298,6 +311,16 @@ impl MigrationState {
         self.is_ready()
             && (self.status == MigrationStatus::Running || self.status == MigrationStatus::Paused)
     }
+
+    fn can_rollback(&self) -> bool {
+        self.is_ready()
+            && self.interlay_id.is_some()
+            && matches!(
+                self.status,
+                MigrationStatus::Completed | MigrationStatus::Failed |
+                MigrationStatus::Cancelled | MigrationStatus::PartialFailure
+            )
+    }
 }
 
 fn parse_migration_status(status: Option<&str>) -> MigrationStatus {
@@ -334,8 +357,11 @@ enum ApiEvent {
     },
     SetupFailed(String),
     MigrationTriggered,
-    MigrationStatusUpdate(MigrationStatus),
+    /// Status update from API. `force` bypasses stale-response protection (for explicit refresh)
+    MigrationStatusUpdate { status: MigrationStatus, force: bool },
     MigrationError(String),
+    /// Debug log message from async tasks
+    DebugLog(String),
     /// Canary traffic split was updated
     TrafficUpdated {
         old_percentage: f64,
@@ -351,6 +377,10 @@ enum ApiEvent {
     MigrationCancelled,
     /// Migration cancellation failed
     MigrationCancelFailed(String),
+    /// Migration rollback initiated
+    MigrationRolledBack,
+    /// Migration rollback failed
+    MigrationRollbackFailed(String),
 }
 
 // ============================================
@@ -879,6 +909,53 @@ impl EdenApiClient {
             .map_err(|e| format!("Failed to parse cancel migration response: {}", e))
     }
 
+    /// Rollback a migration for a specific interlay
+    async fn rollback_interlay(
+        &self,
+        migration_id: &str,
+        interlay_id: &str,
+        reason: Option<&str>,
+    ) -> Result<RollbackInterlayResponse, String> {
+        let body = serde_json::json!({
+            "reason": reason.unwrap_or("Manual rollback from TUI"),
+            "force": false,
+            "preserve_config": true,
+            "overwrite_on_reverse": false
+        });
+
+        let url = format!(
+            "{}/api/v1/migrations/{}/interlay/{}/rollback",
+            self.base_url, migration_id, interlay_id
+        );
+        let response = self
+            .client
+            .post(&url)
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.auth_token.as_ref().unwrap()),
+            )
+            .header("X-Org-Id", &self.org_id)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Rollback migration failed: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "Rollback migration failed ({}) POST {}: {}",
+                status, url, text
+            ));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse rollback migration response: {}", e))
+    }
+
     async fn refresh_migration(
         &self,
         migration_id: &str,
@@ -1322,9 +1399,14 @@ async fn run_migration_setup(
         Err(e) => {
             // Check if it's an "already exists" type error
             if e.contains("409") || e.contains("already exists") || e.contains("Conflict") {
-                // Fetch the existing migration to get the real UUID
+                // Fetch the existing migration to get the real UUID and current state
+                let _ = tx.send(ApiEvent::DebugLog(format!("Migration exists, fetching current state..."))).await;
                 match client.get_migration(&migration_id).await {
                     Ok(m) => {
+                        let _ = tx.send(ApiEvent::DebugLog(format!(
+                            "Existing migration: id={}, status={:?}",
+                            m.id, m.status
+                        ))).await;
                         let _ = tx
                             .send(ApiEvent::ApiCallUpdate {
                                 index: CREATE_MIGRATION,
@@ -1417,16 +1499,22 @@ async fn run_migration_setup(
         .send(ApiEvent::SetupProgress(SetupStep::Ready))
         .await;
 
-    // Collect status using get after startup completes
+    // Collect status using get after setup completes - this syncs with actual system state
+    let _ = tx.send(ApiEvent::DebugLog("Fetching current migration status...".to_string())).await;
     match client.get_migration(&migration.id).await {
         Ok(data) => {
             let status = parse_migration_status(data.status.as_deref());
-            let _ = tx.send(ApiEvent::MigrationStatusUpdate(status)).await;
+            let _ = tx.send(ApiEvent::DebugLog(format!(
+                "Current migration status: {:?} (from API: {:?})",
+                status, data.status
+            ))).await;
+            let _ = tx.send(ApiEvent::MigrationStatusUpdate { status, force: true }).await;
         }
-        Err(_) => {
+        Err(e) => {
+            let _ = tx.send(ApiEvent::DebugLog(format!("Failed to fetch status: {}", e))).await;
             // Fallback to status from create/get response
             let status = parse_migration_status(migration.status.as_deref());
-            let _ = tx.send(ApiEvent::MigrationStatusUpdate(status)).await;
+            let _ = tx.send(ApiEvent::MigrationStatusUpdate { status, force: true }).await;
         }
     }
 }
@@ -1451,7 +1539,7 @@ async fn trigger_migration_task(
                 match client.get_migration(&migration_id).await {
                     Ok(data) => {
                         let status = parse_migration_status(data.status.as_deref());
-                        let _ = tx.send(ApiEvent::MigrationStatusUpdate(status.clone())).await;
+                        let _ = tx.send(ApiEvent::MigrationStatusUpdate { status: status.clone(), force: false }).await;
 
                         // Stop polling when migration reaches a terminal state
                         match status {
@@ -1485,18 +1573,23 @@ async fn refresh_migration_task(
     let client = EdenApiClient::new(org_id, api_base).with_auth(auth_token);
 
     // First call refresh endpoint to sync state
+    let _ = tx.send(ApiEvent::DebugLog(format!("POST /migrations/{}/refresh", migration_id))).await;
     if let Err(e) = client.refresh_migration(&migration_id).await {
+        let _ = tx.send(ApiEvent::DebugLog(format!("Refresh failed: {}", e))).await;
         let _ = tx.send(ApiEvent::MigrationError(e)).await;
         return;
     }
 
     // Then collect status using get
+    let _ = tx.send(ApiEvent::DebugLog(format!("GET /migrations/{}", migration_id))).await;
     match client.get_migration(&migration_id).await {
         Ok(data) => {
             let status = parse_migration_status(data.status.as_deref());
-            let _ = tx.send(ApiEvent::MigrationStatusUpdate(status)).await;
+            let _ = tx.send(ApiEvent::DebugLog(format!("Status: {:?}", status))).await;
+            let _ = tx.send(ApiEvent::MigrationStatusUpdate { status, force: true }).await;
         }
         Err(e) => {
+            let _ = tx.send(ApiEvent::DebugLog(format!("Get failed: {}", e))).await;
             let _ = tx.send(ApiEvent::MigrationError(e)).await;
         }
     }
@@ -1539,7 +1632,7 @@ async fn complete_migration_task(
         Ok(_) => {
             let _ = tx.send(ApiEvent::MigrationCompleted).await;
             // Also send status update to sync the UI
-            let _ = tx.send(ApiEvent::MigrationStatusUpdate(MigrationStatus::Completed)).await;
+            let _ = tx.send(ApiEvent::MigrationStatusUpdate { status: MigrationStatus::Completed, force: true }).await;
         }
         Err(e) => {
             let _ = tx.send(ApiEvent::MigrationCompleteFailed(e)).await;
@@ -1560,10 +1653,43 @@ async fn cancel_migration_task(
         Ok(_) => {
             let _ = tx.send(ApiEvent::MigrationCancelled).await;
             // Also send status update to sync the UI
-            let _ = tx.send(ApiEvent::MigrationStatusUpdate(MigrationStatus::Cancelled)).await;
+            let _ = tx.send(ApiEvent::MigrationStatusUpdate { status: MigrationStatus::Cancelled, force: true }).await;
         }
         Err(e) => {
             let _ = tx.send(ApiEvent::MigrationCancelFailed(e)).await;
+        }
+    }
+}
+
+async fn rollback_migration_task(
+    tx: mpsc::Sender<ApiEvent>,
+    auth_token: String,
+    org_id: String,
+    migration_id: String,
+    interlay_id: String,
+    api_base: String,
+) {
+    let client = EdenApiClient::new(org_id, api_base).with_auth(auth_token);
+
+    let _ = tx.send(ApiEvent::DebugLog(format!(
+        "POST /migrations/{}/interlay/{}/rollback",
+        migration_id, interlay_id
+    ))).await;
+
+    match client.rollback_interlay(&migration_id, &interlay_id, None).await {
+        Ok(response) => {
+            let _ = tx.send(ApiEvent::DebugLog(format!(
+                "Rollback response: status={}, interlay={}",
+                response.status, response.interlay_id
+            ))).await;
+            let _ = tx.send(ApiEvent::MigrationRolledBack).await;
+            // Use the status from the API response (RollingBack if data movement needed, RolledBack if immediate)
+            let status = parse_migration_status(Some(&response.status));
+            let _ = tx.send(ApiEvent::MigrationStatusUpdate { status, force: true }).await;
+        }
+        Err(e) => {
+            let _ = tx.send(ApiEvent::DebugLog(format!("Rollback failed: {}", e))).await;
+            let _ = tx.send(ApiEvent::MigrationRollbackFailed(e)).await;
         }
     }
 }
@@ -1764,17 +1890,53 @@ impl App {
                     self.migration_state.status = MigrationStatus::Running;
                     self.migration_state.last_error = None;
                 }
-                ApiEvent::MigrationStatusUpdate(ref status) => {
-                    // Only log significant status changes
-                    match status {
-                        MigrationStatus::Completed => self.log_debug("Migration completed".to_string()),
-                        MigrationStatus::Failed => self.log_debug("Migration failed".to_string()),
-                        MigrationStatus::PartialFailure => self.log_debug("Migration partial failure".to_string()),
-                        MigrationStatus::Cancelled => self.log_debug("Migration cancelled".to_string()),
-                        MigrationStatus::RolledBack => self.log_debug("Migration rolled back".to_string()),
-                        _ => {} // Don't log pending/running repeatedly
+                ApiEvent::MigrationStatusUpdate { ref status, force } => {
+                    // Protect against stale API responses overwriting authoritative local state
+                    // (unless force=true, which means explicit user action like refresh)
+                    let current = &self.migration_state.status;
+
+                    let should_skip = if force {
+                        false // Explicit refresh always updates
+                    } else {
+                        // Terminal/protected states should not be overwritten by non-terminal states
+                        let current_is_protected = matches!(
+                            current,
+                            MigrationStatus::Completed | MigrationStatus::Failed |
+                            MigrationStatus::Cancelled | MigrationStatus::RolledBack |
+                            MigrationStatus::RollingBack
+                        );
+                        let new_is_non_terminal = matches!(
+                            status,
+                            MigrationStatus::Pending | MigrationStatus::Testing |
+                            MigrationStatus::Ready | MigrationStatus::Running
+                        );
+
+                        // Also don't downgrade Running to pre-running states
+                        let is_pre_running = matches!(
+                            status,
+                            MigrationStatus::Pending | MigrationStatus::Testing | MigrationStatus::Ready
+                        );
+                        let running_downgrade = *current == MigrationStatus::Running && is_pre_running;
+
+                        (current_is_protected && new_is_non_terminal) || running_downgrade
+                    };
+
+                    if should_skip {
+                        // Skip this update - keep current status (stale API response)
+                        self.log_debug(format!("Ignoring stale status {:?} (current: {:?})", status, current));
+                    } else {
+                        // Only log significant status changes
+                        match status {
+                            MigrationStatus::Completed => self.log_debug("Migration completed".to_string()),
+                            MigrationStatus::Failed => self.log_debug("Migration failed".to_string()),
+                            MigrationStatus::PartialFailure => self.log_debug("Migration partial failure".to_string()),
+                            MigrationStatus::Cancelled => self.log_debug("Migration cancelled".to_string()),
+                            MigrationStatus::RolledBack => self.log_debug("Migration rolled back".to_string()),
+                            MigrationStatus::RollingBack => self.log_debug("Migration rolling back".to_string()),
+                            _ => {} // Don't log pending/running repeatedly
+                        }
+                        self.migration_state.status = status.clone();
                     }
-                    self.migration_state.status = status.clone();
                 }
                 ApiEvent::MigrationError(err) => {
                     self.log_debug(format!("Error: {}", err));
@@ -1805,10 +1967,29 @@ impl App {
                     self.log_debug("Migration manually cancelled".to_string());
                     self.migration_state.status = MigrationStatus::Cancelled;
                     self.migration_state.last_error = None;
+                    // Debug: log rollback eligibility
+                    self.log_debug(format!(
+                        "Rollback: ready={}, interlay={}, status={:?}",
+                        self.migration_state.is_ready(),
+                        self.migration_state.interlay_id.is_some(),
+                        self.migration_state.status
+                    ));
                 }
                 ApiEvent::MigrationCancelFailed(err) => {
                     self.log_debug(format!("Cancel failed: {}", err));
                     self.migration_state.last_error = Some(err);
+                }
+                ApiEvent::MigrationRolledBack => {
+                    self.log_debug("Migration rollback initiated".to_string());
+                    self.migration_state.status = MigrationStatus::RollingBack;
+                    self.migration_state.last_error = None;
+                }
+                ApiEvent::MigrationRollbackFailed(err) => {
+                    self.log_debug(format!("Rollback failed: {}", err));
+                    self.migration_state.last_error = Some(err);
+                }
+                ApiEvent::DebugLog(msg) => {
+                    self.log_debug(msg);
                 }
             }
         }
@@ -1899,6 +2080,26 @@ impl App {
 
             self.runtime
                 .spawn(cancel_migration_task(tx, token, org_id, migration_id, api_base));
+        }
+    }
+
+    fn handle_rollback_key(&mut self) {
+        if self.migration_state.can_rollback() {
+            let tx = self.api_event_tx.clone();
+            let token = self.migration_state.auth_token.clone().unwrap();
+            let org_id = self.migration_state.org_id.clone();
+            let migration_id = self.migration_state.migration_id.clone().unwrap();
+            let interlay_id = self.migration_state.interlay_id.clone().unwrap();
+            let api_base = self.migration_state.api_base.clone();
+
+            self.runtime.spawn(rollback_migration_task(
+                tx,
+                token,
+                org_id,
+                migration_id,
+                interlay_id,
+                api_base,
+            ));
         }
     }
 
@@ -2322,31 +2523,71 @@ fn draw_ops_chart(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_debug_panel(f: &mut Frame, area: Rect, app: &App) {
-    let lines: Vec<Line> = app
+    let state = &app.migration_state;
+
+    // Build state summary line
+    let status_color = match state.status {
+        MigrationStatus::Running => Color::Yellow,
+        MigrationStatus::Completed => Color::Green,
+        MigrationStatus::Failed | MigrationStatus::PartialFailure => Color::Red,
+        MigrationStatus::Cancelled => Color::Magenta,
+        MigrationStatus::RollingBack => Color::Cyan,
+        MigrationStatus::RolledBack => Color::Blue,
+        _ => Color::White,
+    };
+
+    let state_line = Line::from(vec![
+        Span::styled("State: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{:?}", state.status), Style::default().fg(status_color).bold()),
+        Span::styled(" | Mode: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(state.mode.name(), Style::default().fg(Color::Cyan)),
+        Span::styled(" | Setup: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            if state.is_ready() { "Ready" } else { "Not Ready" },
+            Style::default().fg(if state.is_ready() { Color::Green } else { Color::Yellow })
+        ),
+        Span::styled(" | Interlay: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            if state.interlay_id.is_some() { "Yes" } else { "No" },
+            Style::default().fg(if state.interlay_id.is_some() { Color::Green } else { Color::Red })
+        ),
+        Span::styled(" | Rollback: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            if state.can_rollback() { "Available" } else { "N/A" },
+            Style::default().fg(if state.can_rollback() { Color::Magenta } else { Color::DarkGray })
+        ),
+    ]);
+
+    // Build log lines
+    let log_lines: Vec<Line> = app
         .debug_log
         .iter()
         .rev()
-        .take(area.height.saturating_sub(2) as usize)
+        .take(area.height.saturating_sub(4) as usize)
         .rev()
         .map(|msg| {
-            let color = if msg.contains("FAILED") || msg.contains("ERROR") {
+            let color = if msg.contains("FAIL") || msg.contains("Error") || msg.contains("error") {
                 Color::Red
-            } else if msg.contains("Success") || msg.contains("complete") {
+            } else if msg.contains("OK") || msg.contains("complete") || msg.contains("Complete") {
                 Color::Green
-            } else if msg.contains("Skipped") {
+            } else if msg.contains("skipped") || msg.contains("Skipped") {
                 Color::Cyan
-            } else if msg.contains("Starting") {
+            } else if msg.contains("started") || msg.contains("Started") || msg.contains("initiated") {
                 Color::Yellow
             } else {
                 Color::White
             };
-            Line::from(Span::styled(msg.clone(), Style::default().fg(color)))
+            Line::from(Span::styled(format!("  {}", msg), Style::default().fg(color)))
         })
         .collect();
 
-    let paragraph = Paragraph::new(lines).block(
+    // Combine state line and log lines
+    let mut all_lines = vec![state_line, Line::from("")];
+    all_lines.extend(log_lines);
+
+    let paragraph = Paragraph::new(all_lines).block(
         Block::default()
-            .title(" Log ")
+            .title(" Debug ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::DarkGray)),
     );
@@ -2585,6 +2826,12 @@ fn draw_ui(f: &mut Frame, app: &App) {
         status_spans.push(Span::styled(" cancel  ", Style::default().fg(Color::DarkGray)));
     }
 
+    // Show rollback when migration is completed, failed, or cancelled
+    if app.migration_state.can_rollback() {
+        status_spans.push(Span::styled("b", Style::default().fg(Color::Magenta)));
+        status_spans.push(Span::styled(" rollback  ", Style::default().fg(Color::DarkGray)));
+    }
+
     // Show refresh/retry - highlight when cancelled or completed to indicate retry is available
     let can_retry = app.migration_state.status == MigrationStatus::Cancelled
         || app.migration_state.status == MigrationStatus::Completed;
@@ -2701,6 +2948,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::Char('q') => app.should_quit = true,
                         KeyCode::Char('c') => app.handle_complete_key(),
                         KeyCode::Char('x') => app.handle_cancel_key(),
+                        KeyCode::Char('b') => app.handle_rollback_key(),
                         KeyCode::Char('f') => app.force_coverage = true,
                         KeyCode::Char('v') => app.show_ops = !app.show_ops,
                         KeyCode::Char('d') => app.show_debug = !app.show_debug,
