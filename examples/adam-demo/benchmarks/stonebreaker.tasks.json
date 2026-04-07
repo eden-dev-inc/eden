@@ -1,0 +1,102 @@
+{
+  "benchmark": "stonebreaker",
+  "version": 1,
+  "description": "Stonebraker-style benchmark run over five retail-backed Eden sources.",
+  "source_universe": [
+    "postgres",
+    "mongodb",
+    "redis",
+    "clickhouse",
+    "weaviate"
+  ],
+  "methodology": {
+    "required_sources_per_task": 2,
+    "distractor_sources_per_task": 3,
+    "ground_truth": "manual verification required",
+    "notes": "The initial run ships benchmark tasks plus evidence queries. Manual gold answers can be attached once the benchmark is exercised against a live Eden deployment."
+  },
+  "auxiliary_corpora": [
+    {
+      "storage_endpoint": "weaviate",
+      "collection": "BenchmarkDocument",
+      "dataset": "G4KMU/t2-ragbench",
+      "subset": "ConvFinQA",
+      "split": "turn_0",
+      "purpose": "document-style retrieval experiments without changing the five-source benchmark universe"
+    },
+    {
+      "storage_endpoint": "localfs",
+      "path_hint": "init/data/stonebreaker/localfs",
+      "dataset": "G4KMU/t2-ragbench",
+      "subset": "ConvFinQA",
+      "split": "turn_0",
+      "optional": true,
+      "purpose": "raw markdown view of the benchmark corpus for filesystem-backed retrieval without changing the five-source benchmark universe"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "sb_001",
+      "question": "Which brands drive the most marketplace engagement while also carrying premium catalog prices?",
+      "required_sources": ["postgres", "mongodb"],
+      "distractor_sources": ["redis", "clickhouse", "weaviate"],
+      "join_key": "brand_id"
+    },
+    {
+      "id": "sb_002",
+      "question": "Do the top spenders in Postgres match the Redis top-spender leaderboard?",
+      "required_sources": ["postgres", "redis"],
+      "distractor_sources": ["mongodb", "clickhouse", "weaviate"],
+      "join_key": "user_id"
+    },
+    {
+      "id": "sb_003",
+      "question": "Which high-engagement marketplace brands are also attracting negative review sentiment?",
+      "required_sources": ["postgres", "weaviate"],
+      "distractor_sources": ["mongodb", "redis", "clickhouse"],
+      "join_key": "brand_id"
+    },
+    {
+      "id": "sb_004",
+      "question": "Which brands dominate the catalog and also appear at the top of Redis real-time brand leaderboards?",
+      "required_sources": ["mongodb", "redis"],
+      "distractor_sources": ["postgres", "clickhouse", "weaviate"],
+      "join_key": "brand_id"
+    },
+    {
+      "id": "sb_005",
+      "question": "Which catalog-heavy brands also generate the most purchase revenue in analytics?",
+      "required_sources": ["mongodb", "clickhouse"],
+      "distractor_sources": ["postgres", "redis", "weaviate"],
+      "join_key": "brand_id"
+    },
+    {
+      "id": "sb_006",
+      "question": "Does the Redis top-products leaderboard agree with ClickHouse purchase volume by product?",
+      "required_sources": ["redis", "clickhouse"],
+      "distractor_sources": ["postgres", "mongodb", "weaviate"],
+      "join_key": "product_id"
+    },
+    {
+      "id": "sb_007",
+      "question": "Which revenue-leading brands are simultaneously accumulating negative review evidence?",
+      "required_sources": ["weaviate", "clickhouse"],
+      "distractor_sources": ["postgres", "mongodb", "redis"],
+      "join_key": "brand_id"
+    },
+    {
+      "id": "sb_008",
+      "question": "Which brands with negative review clusters also have the largest catalog footprint?",
+      "required_sources": ["weaviate", "mongodb"],
+      "distractor_sources": ["postgres", "redis", "clickhouse"],
+      "join_key": "brand_id"
+    },
+    {
+      "id": "sb_009",
+      "question": "Do engagement-heavy brands in marketplace events also win on downstream purchase revenue?",
+      "required_sources": ["postgres", "clickhouse"],
+      "distractor_sources": ["mongodb", "redis", "weaviate"],
+      "join_key": "brand_id"
+    }
+  ]
+}

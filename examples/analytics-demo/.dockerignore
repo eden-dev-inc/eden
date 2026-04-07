@@ -1,0 +1,15 @@
+target/
+Dockerfile
+docker-compose*
+.dockerignore
+.git
+.gitignore
+README.md
+Makefile
+*.md
+grafana/data/
+prometheus/data/
+postgres/data/
+redis/data/
+.env
+.env.*

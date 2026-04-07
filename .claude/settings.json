@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose exec weaviate wget -qO- http://localhost:8080/v1/.well-known/ready)",
+      "Read(//Users/devon/Documents/GitLab/eden-dev/**)"
+    ]
+  }
+}

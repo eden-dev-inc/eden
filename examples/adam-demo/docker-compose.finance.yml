@@ -1,0 +1,265 @@
+name: adam-demo-finance
+
+## Finance / Banking vertical
+##
+## Data silos (6 databases):
+##   pg-core-banking     — Postgres: Fraud detection transactions (CiferAI, 21M txns)
+##   pg-credit-scoring   — Postgres: Credit card transactions (Sparkov, 1.85M)
+##   clickhouse-trading  — ClickHouse: Stock time-series (S&P 500 1-min bars)
+##   mongo-compliance    — MongoDB: SEC 10-K annual filings (245K reports)
+##   redis-fraud         — Redis: Real-time fraud scores, account balances
+##   weaviate-risk       — Weaviate: Semantic search on filings & transactions
+
+services:
+  pg-core-banking:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: eden
+      POSTGRES_PASSWORD: eden
+      POSTGRES_DB: core_banking
+    ports:
+      - "5632:5432"
+    volumes:
+      - pg_core_banking_data:/var/lib/postgresql/data
+      - ./init/schemas/finance/postgres_core_banking.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./init/schemas/rbac_postgres.sql:/docker-entrypoint-initdb.d/02-rbac.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eden -d core_banking"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  pg-credit-scoring:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: eden
+      POSTGRES_PASSWORD: eden
+      POSTGRES_DB: credit_scoring
+    ports:
+      - "5633:5432"
+    volumes:
+      - pg_credit_data:/var/lib/postgresql/data
+      - ./init/schemas/finance/postgres_credit_scoring.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./init/schemas/rbac_postgres.sql:/docker-entrypoint-initdb.d/02-rbac.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eden -d credit_scoring"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  clickhouse-trading:
+    image: clickhouse/clickhouse-server:24
+    environment:
+      CLICKHOUSE_USER: eden
+      CLICKHOUSE_PASSWORD: eden
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8323:8123"
+      - "9200:9000"
+    volumes:
+      - ch_trading_data:/var/lib/clickhouse
+      - ./init/schemas/finance/clickhouse_trading.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./init/schemas/rbac_clickhouse.sql:/docker-entrypoint-initdb.d/02-rbac.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user eden --password eden --query 'SELECT 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  mongo-compliance:
+    image: mongo:7
+    command: ["mongod", "--bind_ip_all", "--auth"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: eden
+      MONGO_INITDB_ROOT_PASSWORD: eden
+      MONGO_INITDB_DATABASE: compliance
+    ports:
+      - "27217:27017"
+    volumes:
+      - mongo_compliance_data:/data/db
+      - ./init/schemas/finance/rbac_mongo.js:/docker-entrypoint-initdb.d/02-rbac.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "mongodb://eden:eden@127.0.0.1:27017/admin?directConnection=true", "--eval", "quit(db.adminCommand({ ping: 1 }).ok ? 0 : 2)"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    networks:
+      - adam-network
+
+  redis-fraud:
+    image: redis:7-alpine
+    command: ["redis-server", "--aclfile", "/etc/redis/users.acl"]
+    ports:
+      - "6579:6379"
+    volumes:
+      - redis_fraud_data:/data
+      - ./init/schemas/redis_users.acl:/etc/redis/users.acl:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "--user", "default", "--pass", "eden", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  weaviate-risk:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.4
+    ports:
+      - "8280:8080"
+      - "50251:50051"
+    volumes:
+      - weaviate_risk_data:/var/lib/weaviate
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODULE: none
+      CLUSTER_HOSTNAME: node1
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/.well-known/ready || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  data-init:
+    build:
+      context: ./init
+      dockerfile: Dockerfile
+    depends_on:
+      pg-core-banking:
+        condition: service_healthy
+      pg-credit-scoring:
+        condition: service_healthy
+      mongo-compliance:
+        condition: service_healthy
+      redis-fraud:
+        condition: service_healthy
+      weaviate-risk:
+        condition: service_healthy
+    environment:
+      VERTICAL: finance
+      DISABLE_CLICKHOUSE_INIT: ${DISABLE_CLICKHOUSE_INIT:-1}
+      SCALE: ${SCALE:-demo}
+      HF_DATASETS_CACHE: /cache
+      PG_CORE_BANKING_URL: postgresql://eden:eden@pg-core-banking:5432/core_banking
+      PG_CREDIT_SCORING_URL: postgresql://eden:eden@pg-credit-scoring:5432/credit_scoring
+      CLICKHOUSE_HOST: clickhouse-trading
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_USER: eden
+      CLICKHOUSE_PASSWORD: eden
+      MONGO_URL: mongodb://eden:eden@mongo-compliance:27017
+      MONGO_DB: compliance
+      REDIS_URL: redis://default:eden@redis-fraud:6379
+      WEAVIATE_URL: http://weaviate-risk:8080
+    volumes:
+      - hf_cache:/cache
+      - ./init/data:/app/data:ro
+    networks:
+      - adam-network
+
+  adam-app:
+    profiles: [app]
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    environment:
+      VERTICAL: finance
+      EDEN_API_URL: ${EDEN_API_URL:-http://host.docker.internal:8000}
+      EDEN_ORG_ID: ${EDEN_ORG_ID:-adam-demo}
+      EDEN_JWT_TOKEN: ${EDEN_JWT_TOKEN:-}
+      BIND_ADDRESS: 0.0.0.0:3000
+      QUERIES_PER_SECOND: ${QUERIES_PER_SECOND:-100}
+      MAX_WORKERS: ${MAX_WORKERS:-50}
+      DISABLE_CLICKHOUSE_ENDPOINTS: ${DISABLE_CLICKHOUSE_ENDPOINTS:-1}
+      PG_CORE_BANKING_URL: postgresql://eden:eden@pg-core-banking:5432/core_banking
+      PG_CORE_BANKING_READ_URL: postgresql://reader:reader_pass@pg-core-banking:5432/core_banking
+      PG_CORE_BANKING_WRITE_URL: postgresql://writer:writer_pass@pg-core-banking:5432/core_banking
+      PG_CREDIT_SCORING_URL: postgresql://eden:eden@pg-credit-scoring:5432/credit_scoring
+      PG_CREDIT_SCORING_READ_URL: postgresql://reader:reader_pass@pg-credit-scoring:5432/credit_scoring
+      PG_CREDIT_SCORING_WRITE_URL: postgresql://writer:writer_pass@pg-credit-scoring:5432/credit_scoring
+      CLICKHOUSE_URL: http://eden:eden@clickhouse-trading:8123/analytics
+      CLICKHOUSE_READ_URL: http://reader:reader_pass@clickhouse-trading:8123/analytics
+      CLICKHOUSE_WRITE_URL: http://writer:writer_pass@clickhouse-trading:8123/analytics
+      MONGO_URL: mongodb://eden:eden@mongo-compliance:27017
+      MONGO_DB: compliance
+      MONGO_READ_URL: mongodb://reader:reader_pass@mongo-compliance:27017
+      MONGO_WRITE_URL: mongodb://writer:writer_pass@mongo-compliance:27017
+      REDIS_URL: redis://default:eden@redis-fraud:6379
+      REDIS_READ_URL: redis://reader:reader_pass@redis-fraud:6379
+      REDIS_WRITE_URL: redis://writer:writer_pass@redis-fraud:6379
+      WEAVIATE_URL: http://weaviate-risk:8080
+      EDEN_PG_CORE_BANKING_URL: postgresql://eden:eden@host.docker.internal:5632/core_banking
+      EDEN_PG_CORE_BANKING_READ_URL: postgresql://reader:reader_pass@host.docker.internal:5632/core_banking
+      EDEN_PG_CORE_BANKING_WRITE_URL: postgresql://writer:writer_pass@host.docker.internal:5632/core_banking
+      EDEN_PG_CREDIT_SCORING_URL: postgresql://eden:eden@host.docker.internal:5633/credit_scoring
+      EDEN_PG_CREDIT_SCORING_READ_URL: postgresql://reader:reader_pass@host.docker.internal:5633/credit_scoring
+      EDEN_PG_CREDIT_SCORING_WRITE_URL: postgresql://writer:writer_pass@host.docker.internal:5633/credit_scoring
+      EDEN_CLICKHOUSE_URL: http://eden:eden@host.docker.internal:8323/analytics
+      EDEN_CLICKHOUSE_READ_URL: http://reader:reader_pass@host.docker.internal:8323/analytics
+      EDEN_CLICKHOUSE_WRITE_URL: http://writer:writer_pass@host.docker.internal:8323/analytics
+      EDEN_MONGO_URL: mongodb://eden:eden@host.docker.internal:27217
+      EDEN_MONGO_READ_URL: mongodb://reader:reader_pass@host.docker.internal:27217
+      EDEN_MONGO_WRITE_URL: mongodb://writer:writer_pass@host.docker.internal:27217
+      EDEN_REDIS_URL: redis://default:eden@host.docker.internal:6579
+      EDEN_REDIS_READ_URL: redis://reader:reader_pass@host.docker.internal:6579
+      EDEN_REDIS_WRITE_URL: redis://writer:writer_pass@host.docker.internal:6579
+      EDEN_WEAVIATE_URL: http://host.docker.internal:8280
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      GOOGLE_WORKSPACE_CLIENT_ID: ${GOOGLE_WORKSPACE_CLIENT_ID:-}
+      GOOGLE_WORKSPACE_PROJECT_ID: ${GOOGLE_WORKSPACE_PROJECT_ID:-}
+      GOOGLE_WORKSPACE_AUTH_URI: ${GOOGLE_WORKSPACE_AUTH_URI:-https://accounts.google.com/o/oauth2/auth}
+      GOOGLE_WORKSPACE_TOKEN_URI: ${GOOGLE_WORKSPACE_TOKEN_URI:-https://oauth2.googleapis.com/token}
+      GOOGLE_WORKSPACE_AUTH_PROVIDER_X509_CERT_URL: ${GOOGLE_WORKSPACE_AUTH_PROVIDER_X509_CERT_URL:-https://www.googleapis.com/oauth2/v1/certs}
+      GOOGLE_WORKSPACE_CLIENT_SECRET: ${GOOGLE_WORKSPACE_CLIENT_SECRET:-}
+      GOOGLE_WORKSPACE_ACCESS_TOKEN: ${GOOGLE_WORKSPACE_ACCESS_TOKEN:-}
+      GOOGLE_WORKSPACE_API_BASE_URL: ${GOOGLE_WORKSPACE_API_BASE_URL:-https://www.googleapis.com}
+      AZURE_APP_ID: ${AZURE_APP_ID:-}
+      AZURE_DISPLAY_NAME: ${AZURE_DISPLAY_NAME:-}
+      AZURE_PASSWORD: ${AZURE_PASSWORD:-}
+      AZURE_TENANT: ${AZURE_TENANT:-}
+      AZURE_SUBSCRIPTION_ID: ${AZURE_SUBSCRIPTION_ID:-}
+      AZURE_API_BASE_URL: ${AZURE_API_BASE_URL:-https://management.azure.com}
+      GITLAB_ACCESS_TOKEN: ${GITLAB_ACCESS_TOKEN:-}
+      GITLAB_API_BASE_URL: ${GITLAB_API_BASE_URL:-https://gitlab.com/api/v4}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-nano}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
+      DD_API_KEY: ${DD_API_KEY:-}
+      DD_APP_KEY: ${DD_APP_KEY:-}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      ERASER_API_KEY: ${ERASER_API_KEY:-}
+      EDEN_NEW_ORG_SECRET: ${EDEN_NEW_ORG_SECRET:-neworgsecret}
+      HTTP_TIMEOUT: ${HTTP_TIMEOUT:-30}
+      SETUP_RETRIES: ${SETUP_RETRIES:-5}
+      RUST_LOG: adam_demo=info
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - adam-network
+
+volumes:
+  pg_core_banking_data:
+  pg_credit_data:
+  ch_trading_data:
+  mongo_compliance_data:
+  redis_fraud_data:
+  weaviate_risk_data:
+  hf_cache:
+
+networks:
+  adam-network:
+    driver: bridge

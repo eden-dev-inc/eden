@@ -1,0 +1,55 @@
+[package]
+name = "analytics-server"
+version = "0.1.0"
+edition = "2021"
+autobins = false
+default-run = "analytics-server"
+
+[[bin]]
+name = "analytics-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "traffic-client"
+path = "src/bin/traffic-client.rs"
+
+[[bin]]
+name = "runtime-validator"
+path = "src/bin/runtime-validator.rs"
+
+[features]
+default = ["redis-string"]
+# Redis command type features - enable one at a time
+redis-string = []      # Default: Uses GET/SET with JSON serialization
+redis-json = []        # Uses RedisJSON module (JSON.GET/JSON.SET)
+redis-list = []        # Uses LPUSH/RPUSH/LRANGE for queue-like caching
+redis-set = []         # Uses SADD/SMEMBERS for unique collections
+redis-sorted-set = []  # Uses ZADD/ZRANGE for ranked/scored data
+redis-hash = []        # Uses HSET/HGET/HGETALL for structured data
+# Compatibility no-op. PostgreSQL support is runtime-controlled by config.
+postgres = []
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid"] }
+redis = { version = "0.32", features = ["tokio-comp", "connection-manager", "aio"] }
+r2d2 = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+fake = { version = "2.9", features = ["derive", "chrono", "uuid"] }
+clap = { version = "3.2", features = ["derive", "env"] }  # clap v3 with env feature
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+log = "0.4"
+prometheus = "0.13"
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+anyhow = "1.0"
+rand = { version = "0.8", features = ["std_rng"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+fast-telemetry = { version = "=0.1.0", features = ["otlp", "eviction"] }
+fast-telemetry-export = { version = "=0.1.0", default-features = false, features = ["dogstatsd", "otlp"] }

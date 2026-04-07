@@ -1,0 +1,18 @@
+# Build artifacts
+target/
+
+# Cargo lock (optional for binaries, but keeping it out for examples)
+Cargo.lock
+
+# Environment files
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store

@@ -1,0 +1,1 @@
+cargo run --release -- postgresql://postgres:postgres@localhost:5432/source postgresql://postgres:postgres@localhost:5433/dest http://localhost:8000 postgresql://postgres:postgres@host.docker.internal:5432/source postgresql://postgres:postgres@host.docker.internal:5433/dest

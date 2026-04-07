@@ -1,0 +1,167 @@
+services:
+  analytics-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CARGO_FEATURES: "${CARGO_FEATURES:-redis-string}"
+    environment:
+      - REDIS_ENABLED=${REDIS_ENABLED:-true}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - POSTGRES_ENABLED=${POSTGRES_ENABLED:-false}
+      - INTERNAL_WORKLOAD_ENABLED=${INTERNAL_WORKLOAD_ENABLED:-false}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB_NAME=${POSTGRES_DB_NAME:-analytics}
+      - BIND_ADDRESS=0.0.0.0:3000
+      - MAX_WORKERS=${MAX_WORKERS:-32}
+      - EVENTS_PER_SECOND=${EVENTS_PER_SECOND:-1000}
+      - QUERIES_PER_SECOND=${QUERIES_PER_SECOND:-2000}
+      - ORGANIZATIONS=${ORGANIZATIONS:-100}
+      - USERS_PER_ORG=${USERS_PER_ORG:-1000}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-50}
+      - PG_QUERY_WORKERS=${PG_QUERY_WORKERS:-100}
+      - PG_EVENTS_PER_SECOND=${PG_EVENTS_PER_SECOND:-500}
+      - TELEMETRY_PROVIDER=${TELEMETRY_PROVIDER:-datadog}
+      - TELEMETRY_ENABLED=${TELEMETRY_ENABLED:-false}
+      - TELEMETRY_SERVICE=${SERVER_TELEMETRY_SERVICE:-analytics-server}
+      - TELEMETRY_ENV=${TELEMETRY_ENV:-demo}
+      - TELEMETRY_VERSION=${TELEMETRY_VERSION:-0.1.0}
+      - TELEMETRY_DATADOG_API_KEY=${TELEMETRY_DATADOG_API_KEY:-}
+      - TELEMETRY_DOGSTATSD_ENDPOINT=${TELEMETRY_DOGSTATSD_ENDPOINT:-datadog-agent:8125}
+      - TELEMETRY_OPENTELEMETRY_ENDPOINT=${TELEMETRY_OPENTELEMETRY_ENDPOINT:-http://datadog-agent:4318}
+      - TELEMETRY_QUERY_LOG_EVERY=${TELEMETRY_QUERY_LOG_EVERY:-50}
+      - TELEMETRY_EVENT_SAMPLE_SIZE=${TELEMETRY_EVENT_SAMPLE_SIZE:-6}
+      - TELEMETRY_CAPTURE_QUERY_PAYLOADS=${TELEMETRY_CAPTURE_QUERY_PAYLOADS:-true}
+      - TELEMETRY_CAPTURE_EVENT_PAYLOADS=${TELEMETRY_CAPTURE_EVENT_PAYLOADS:-true}
+      - TELEMETRY_CAPTURE_SYSTEM_SNAPSHOTS=${TELEMETRY_CAPTURE_SYSTEM_SNAPSHOTS:-true}
+      - RUST_LOG=analytics_server=info,sqlx=warn
+    ports:
+      - "3000:3000"
+    labels:
+      com.datadoghq.tags.service: "${SERVER_TELEMETRY_SERVICE:-analytics-server}"
+      com.datadoghq.tags.env: "${TELEMETRY_ENV:-demo}"
+      com.datadoghq.tags.version: "${TELEMETRY_VERSION:-0.1.0}"
+      com.datadoghq.ad.logs: >-
+        [{"source":"rust","service":"${SERVER_TELEMETRY_SERVICE:-analytics-server}","tags":["demo:analytics","role:server","redis_enabled:${REDIS_ENABLED:-true}","postgres_enabled:${POSTGRES_ENABLED:-false}","internal_workload_enabled:${INTERNAL_WORKLOAD_ENABLED:-false}"]}]
+    restart: unless-stopped
+    networks:
+      - analytics-network
+
+  traffic-client:
+    profiles: [clients]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CARGO_FEATURES: "${CARGO_FEATURES:-redis-string}"
+    command: ["./target/release/traffic-client"]
+    environment:
+      - CLIENT_NAME=${CLIENT_NAME:-traffic-client}
+      - CLIENT_PROFILE=${CLIENT_PROFILE:-balanced}
+      - CLIENT_BIND_ADDRESS=0.0.0.0:3100
+      - TARGET_BASE_URL=http://analytics-server:3000
+      - QUERIES_PER_SECOND=${CLIENT_QUERIES_PER_SECOND:-180}
+      - EVENTS_PER_SECOND=${CLIENT_EVENTS_PER_SECOND:-40}
+      - QUERY_WORKERS=${CLIENT_QUERY_WORKERS:-8}
+      - EVENT_WORKERS=${CLIENT_EVENT_WORKERS:-4}
+      - ORGANIZATION_FETCH_LIMIT=${CLIENT_ORGANIZATION_FETCH_LIMIT:-100}
+      - ORGANIZATION_REFRESH_INTERVAL_SECONDS=${CLIENT_ORG_REFRESH_SECONDS:-30}
+      - REQUEST_TIMEOUT_MS=${CLIENT_REQUEST_TIMEOUT_MS:-5000}
+      - TELEMETRY_PROVIDER=${TELEMETRY_PROVIDER:-datadog}
+      - TELEMETRY_ENABLED=${TELEMETRY_ENABLED:-false}
+      - TELEMETRY_SERVICE=${CLIENT_TELEMETRY_SERVICE:-traffic-client}
+      - TELEMETRY_ENV=${TELEMETRY_ENV:-demo}
+      - TELEMETRY_VERSION=${TELEMETRY_VERSION:-0.1.0}
+      - TELEMETRY_DATADOG_API_KEY=${TELEMETRY_DATADOG_API_KEY:-}
+      - TELEMETRY_DOGSTATSD_ENDPOINT=${TELEMETRY_DOGSTATSD_ENDPOINT:-datadog-agent:8125}
+      - TELEMETRY_OPENTELEMETRY_ENDPOINT=${TELEMETRY_OPENTELEMETRY_ENDPOINT:-http://datadog-agent:4318}
+      - TELEMETRY_QUERY_LOG_EVERY=${TELEMETRY_QUERY_LOG_EVERY:-1}
+      - TELEMETRY_EVENT_SAMPLE_SIZE=${TELEMETRY_EVENT_SAMPLE_SIZE:-1}
+      - TELEMETRY_CAPTURE_QUERY_PAYLOADS=${TELEMETRY_CAPTURE_QUERY_PAYLOADS:-true}
+      - TELEMETRY_CAPTURE_EVENT_PAYLOADS=${TELEMETRY_CAPTURE_EVENT_PAYLOADS:-true}
+      - TELEMETRY_CAPTURE_SYSTEM_SNAPSHOTS=false
+      - RUST_LOG=traffic_client=info,reqwest=warn
+    depends_on:
+      - analytics-server
+    ports:
+      - "3100"
+    labels:
+      com.datadoghq.tags.service: "${CLIENT_TELEMETRY_SERVICE:-traffic-client}"
+      com.datadoghq.tags.env: "${TELEMETRY_ENV:-demo}"
+      com.datadoghq.tags.version: "${TELEMETRY_VERSION:-0.1.0}"
+      com.datadoghq.ad.logs: >-
+        [{"source":"rust","service":"${CLIENT_TELEMETRY_SERVICE:-traffic-client}","tags":["demo:analytics","role:client","client_profile:${CLIENT_PROFILE:-balanced}"]}]
+    restart: unless-stopped
+    networks:
+      - analytics-network
+
+  redis:
+    profiles: [redis]
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6370:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - analytics-network
+
+  postgres:
+    profiles: [postgres]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: analytics
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d analytics"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks:
+      - analytics-network
+
+  datadog-agent:
+    profiles: [datadog]
+    image: gcr.io/datadoghq/agent:latest
+    environment:
+      - DD_API_KEY=${DD_API_KEY:-}
+      - DD_SITE=${DD_SITE:-datadoghq.com}
+      - DD_ENV=${TELEMETRY_ENV:-demo}
+      - DD_SERVICE=${SERVER_TELEMETRY_SERVICE:-analytics-server}
+      - DD_VERSION=${TELEMETRY_VERSION:-0.1.0}
+      - DD_LOGS_ENABLED=true
+      - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=false
+      - DD_CONTAINER_EXCLUDE_LOGS=name:datadog-agent
+      - DD_PROCESS_AGENT_ENABLED=false
+      - DD_APM_ENABLED=true
+      - DD_APM_NON_LOCAL_TRAFFIC=true
+      - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
+      - DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT=0.0.0.0:4318
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    networks:
+      - analytics-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  analytics-network:
+    driver: bridge

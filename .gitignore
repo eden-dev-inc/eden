@@ -1,0 +1,23 @@
+# Rust
+**/target/
+**/*.rs.bk
+Cargo.lock
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+
+# Logs
+*.log
+
+# IDE
+.idea/
+.DS_Store

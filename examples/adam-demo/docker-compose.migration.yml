@@ -1,0 +1,68 @@
+name: adam-demo
+
+# Migration vertical — connects to EXTERNAL Redis endpoints (e.g., Azure Redis Cache)
+# No local Redis containers — source and dest are remote.
+#
+# Configure in .env:
+#   REDIS_SOURCE_URL=rediss://:PASSWORD@host:6380
+#   REDIS_DEST_URL=rediss://:PASSWORD@host:10000
+#   EDEN_API_URL=http://eden-host:8000
+
+networks:
+  adam-network:
+    driver: bridge
+
+services:
+  data-init:
+    build:
+      context: ./init
+      dockerfile: Dockerfile
+    environment:
+      VERTICAL: migration
+      SCALE: ${SCALE:-demo}
+      REDIS_SOURCE_URL: ${REDIS_SOURCE_URL}
+      REDIS_DEST_URL: ${REDIS_DEST_URL}
+    networks:
+      - adam-network
+
+  adam-app:
+    profiles: [app]
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    environment:
+      VERTICAL: migration
+      EDEN_API_URL: ${EDEN_API_URL:-http://host.docker.internal:8000}
+      EDEN_ORG_ID: ${EDEN_ORG_ID:-adam-demo}
+      EDEN_JWT_TOKEN: ${EDEN_JWT_TOKEN:-}
+      EDEN_NEW_ORG_SECRET: ${EDEN_NEW_ORG_SECRET:-neworgsecret}
+      BIND_ADDRESS: 0.0.0.0:3000
+      QUERIES_PER_SECOND: ${QUERIES_PER_SECOND:-50}
+      MAX_WORKERS: ${MAX_WORKERS:-20}
+      # Source Redis (Azure Redis Cache — legacy)
+      REDIS_SOURCE_URL: ${REDIS_SOURCE_URL}
+      EDEN_REDIS_SOURCE_URL: ${REDIS_SOURCE_URL}
+      # Destination Redis (Azure Managed Redis — new)
+      REDIS_DEST_URL: ${REDIS_DEST_URL}
+      EDEN_REDIS_DEST_URL: ${REDIS_DEST_URL}
+      # Interlay (configured during demo via Eden UI)
+      INTERLAY_PORT: ${INTERLAY_PORT:-6366}
+      AZURE_APP_ID: ${AZURE_APP_ID:-}
+      AZURE_DISPLAY_NAME: ${AZURE_DISPLAY_NAME:-}
+      AZURE_PASSWORD: ${AZURE_PASSWORD:-}
+      AZURE_TENANT: ${AZURE_TENANT:-}
+      AZURE_SUBSCRIPTION_ID: ${AZURE_SUBSCRIPTION_ID:-}
+      AZURE_API_BASE_URL: ${AZURE_API_BASE_URL:-https://management.azure.com}
+      GITLAB_ACCESS_TOKEN: ${GITLAB_ACCESS_TOKEN:-}
+      GITLAB_API_BASE_URL: ${GITLAB_API_BASE_URL:-https://gitlab.com/api/v4}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-nano}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
+    ports:
+      - "3000:3000"
+    networks:
+      - adam-network

@@ -1,0 +1,80 @@
+## Shared service definitions for all verticals.
+## Each vertical compose file extends this with its specific database instances.
+##
+## Usage:
+##   docker compose -f docker-compose.base.yml -f docker-compose.retail.yml up
+##   docker compose -f docker-compose.base.yml -f docker-compose.tech.yml up
+##
+## Or use the wrapper:
+##   VERTICAL=tech docker compose up
+
+x-postgres: &postgres-base
+  image: postgres:16-alpine
+  environment: &pg-env
+    POSTGRES_USER: eden
+    POSTGRES_PASSWORD: eden
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U eden"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+  networks:
+    - adam-network
+
+x-mongo: &mongo-base
+  image: mongo:7
+  environment: &mongo-env
+    MONGO_INITDB_ROOT_USERNAME: eden
+    MONGO_INITDB_ROOT_PASSWORD: eden
+  healthcheck:
+    test: ["CMD", "mongosh", "--quiet", "mongodb://eden:eden@127.0.0.1:27017/admin?directConnection=true", "--eval", "quit(db.adminCommand({ ping: 1 }).ok ? 0 : 2)"]
+    interval: 5s
+    timeout: 10s
+    retries: 10
+  networks:
+    - adam-network
+
+x-redis: &redis-base
+  image: redis:7-alpine
+  healthcheck:
+    test: ["CMD", "redis-cli", "--user", "default", "--pass", "eden", "ping"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+  networks:
+    - adam-network
+
+x-clickhouse: &clickhouse-base
+  image: clickhouse/clickhouse-server:24
+  environment: &ch-env
+    CLICKHOUSE_USER: eden
+    CLICKHOUSE_PASSWORD: eden
+    CLICKHOUSE_DB: analytics
+    CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+  healthcheck:
+    test: ["CMD-SHELL", "clickhouse-client --user eden --password eden --query 'SELECT 1'"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+  networks:
+    - adam-network
+
+x-weaviate: &weaviate-base
+  image: cr.weaviate.io/semitechnologies/weaviate:1.28.4
+  environment: &weaviate-env
+    QUERY_DEFAULTS_LIMIT: 25
+    AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+    PERSISTENCE_DATA_PATH: /var/lib/weaviate
+    DEFAULT_VECTORIZER_MODULE: none
+    CLUSTER_HOSTNAME: node1
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/.well-known/ready || exit 1"]
+    interval: 5s
+    timeout: 3s
+    retries: 10
+  networks:
+    - adam-network
+
+networks:
+  adam-network:
+    driver: bridge

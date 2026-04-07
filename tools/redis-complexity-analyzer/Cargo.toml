@@ -1,0 +1,19 @@
+[package]
+name = "eden-redis-migration-analyzer"
+version = "0.1.0"
+edition = "2021"
+description = "Analyze Redis database complexity, estimate Azure migration pricing and timeline"
+
+[dependencies]
+redis = { version = "0.32", features = ["tokio-comp", "connection-manager", "aio"] }
+tokio = { version = "1.0", features = ["full"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+rand = "0.8"
+colored = "2.0"
+chrono = "0.4"
+ratatui = "0.29"
+crossterm = "0.28"
+reqwest = { version = "0.12", features = ["json"] }

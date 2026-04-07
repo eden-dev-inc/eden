@@ -1,0 +1,329 @@
+name: adam-demo-healthcare
+
+## Healthcare / Clinical vertical
+##
+## Data silos (8 databases):
+##   pg-patient-records   — Postgres: Synthea patients & encounters (575K patients)
+##   pg-billing           — Postgres: Claims, payer coverage, costs
+##   pg-cms-claims        — Postgres: CMS DE-SynPUF Medicare claims (legacy schema)
+##   mongo-clinical-docs  — MongoDB: Conditions, procedures, medications
+##   mongo-lab-results    — MongoDB: Observations, vitals, lab results
+##   clickhouse-analytics — ClickHouse: Billing analytics, encounter trends
+##   redis-alerts         — Redis: Bed availability, patient alerts
+##   weaviate-clinical    — Weaviate: Clinical condition embeddings
+
+services:
+  pg-patient-records:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: eden
+      POSTGRES_PASSWORD: eden
+      POSTGRES_DB: patient_records
+    ports:
+      - "5632:5432"
+    volumes:
+      - pg_patients_data:/var/lib/postgresql/data
+      - ./init/schemas/healthcare/postgres_patient_records.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./init/schemas/rbac_postgres.sql:/docker-entrypoint-initdb.d/02-rbac.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eden -d patient_records"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  pg-billing:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: eden
+      POSTGRES_PASSWORD: eden
+      POSTGRES_DB: billing
+    ports:
+      - "5633:5432"
+    volumes:
+      - pg_billing_data:/var/lib/postgresql/data
+      - ./init/schemas/healthcare/postgres_billing.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./init/schemas/rbac_postgres.sql:/docker-entrypoint-initdb.d/02-rbac.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eden -d billing"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  pg-cms-claims:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: eden
+      POSTGRES_PASSWORD: eden
+      POSTGRES_DB: cms_claims
+    ports:
+      - "5634:5432"
+    volumes:
+      - pg_cms_claims_data:/var/lib/postgresql/data
+      - ./init/schemas/healthcare/postgres_cms_claims.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./init/schemas/rbac_postgres.sql:/docker-entrypoint-initdb.d/02-rbac.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eden -d cms_claims"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  mongo-clinical-docs:
+    image: mongo:7
+    command: ["mongod", "--bind_ip_all", "--auth"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: eden
+      MONGO_INITDB_ROOT_PASSWORD: eden
+      MONGO_INITDB_DATABASE: clinical
+    ports:
+      - "27217:27017"
+    volumes:
+      - mongo_clinical_data:/data/db
+      - ./init/schemas/healthcare/rbac_mongo_clinical.js:/docker-entrypoint-initdb.d/02-rbac.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "mongodb://eden:eden@127.0.0.1:27017/admin?directConnection=true", "--eval", "quit(db.adminCommand({ ping: 1 }).ok ? 0 : 2)"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    networks:
+      - adam-network
+
+  mongo-lab-results:
+    image: mongo:7
+    command: ["mongod", "--bind_ip_all", "--auth"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: eden
+      MONGO_INITDB_ROOT_PASSWORD: eden
+      MONGO_INITDB_DATABASE: laboratory
+    ports:
+      - "27218:27017"
+    volumes:
+      - mongo_lab_data:/data/db
+      - ./init/schemas/healthcare/rbac_mongo_lab.js:/docker-entrypoint-initdb.d/02-rbac.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "mongodb://eden:eden@127.0.0.1:27017/admin?directConnection=true", "--eval", "quit(db.adminCommand({ ping: 1 }).ok ? 0 : 2)"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    networks:
+      - adam-network
+
+  clickhouse-analytics:
+    image: clickhouse/clickhouse-server:24
+    environment:
+      CLICKHOUSE_USER: eden
+      CLICKHOUSE_PASSWORD: eden
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8323:8123"
+      - "9200:9000"
+    volumes:
+      - ch_billing_data:/var/lib/clickhouse
+      - ./init/schemas/healthcare/clickhouse_billing.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./init/schemas/rbac_clickhouse.sql:/docker-entrypoint-initdb.d/02-rbac.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user eden --password eden --query 'SELECT 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  redis-alerts:
+    image: redis:7-alpine
+    command: ["redis-server", "--aclfile", "/etc/redis/users.acl"]
+    ports:
+      - "6579:6379"
+    volumes:
+      - redis_alerts_data:/data
+      - ./init/schemas/redis_users.acl:/etc/redis/users.acl:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "--user", "default", "--pass", "eden", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  weaviate-clinical:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.4
+    ports:
+      - "8280:8080"
+      - "50251:50051"
+    volumes:
+      - weaviate_clinical_data:/var/lib/weaviate
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODULE: none
+      CLUSTER_HOSTNAME: node1
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/.well-known/ready || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  data-init:
+    build:
+      context: ./init
+      dockerfile: Dockerfile
+    depends_on:
+      pg-patient-records:
+        condition: service_healthy
+      pg-billing:
+        condition: service_healthy
+      pg-cms-claims:
+        condition: service_healthy
+      mongo-clinical-docs:
+        condition: service_healthy
+      mongo-lab-results:
+        condition: service_healthy
+      redis-alerts:
+        condition: service_healthy
+      weaviate-clinical:
+        condition: service_healthy
+    environment:
+      VERTICAL: healthcare
+      DISABLE_CLICKHOUSE_INIT: ${DISABLE_CLICKHOUSE_INIT:-0}
+      SCALE: ${SCALE:-demo}
+      HF_DATASETS_CACHE: /cache
+      PG_PATIENT_RECORDS_URL: postgresql://eden:eden@pg-patient-records:5432/patient_records
+      PG_BILLING_URL: postgresql://eden:eden@pg-billing:5432/billing
+      PG_CMS_CLAIMS_URL: postgresql://eden:eden@pg-cms-claims:5432/cms_claims
+      MONGO_CLINICAL_URL: mongodb://eden:eden@mongo-clinical-docs:27017
+      MONGO_CLINICAL_DB: clinical
+      MONGO_LAB_URL: mongodb://eden:eden@mongo-lab-results:27017
+      MONGO_LAB_DB: laboratory
+      CLICKHOUSE_HOST: clickhouse-analytics
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_USER: eden
+      CLICKHOUSE_PASSWORD: eden
+      REDIS_URL: redis://default:eden@redis-alerts:6379
+      WEAVIATE_URL: http://weaviate-clinical:8080
+    volumes:
+      - hf_cache:/cache
+      - ./init/data:/app/data:ro
+    networks:
+      - adam-network
+
+  adam-app:
+    profiles: [app]
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    environment:
+      VERTICAL: healthcare
+      EDEN_API_URL: ${EDEN_API_URL:-http://host.docker.internal:8000}
+      EDEN_ORG_ID: ${EDEN_ORG_ID:-adam-demo}
+      EDEN_JWT_TOKEN: ${EDEN_JWT_TOKEN:-}
+      BIND_ADDRESS: 0.0.0.0:3000
+      QUERIES_PER_SECOND: ${QUERIES_PER_SECOND:-0}
+      MAX_WORKERS: ${MAX_WORKERS:-50}
+      DISABLE_CLICKHOUSE_ENDPOINTS: ${DISABLE_CLICKHOUSE_ENDPOINTS:-0}
+      PG_PATIENT_RECORDS_URL: postgresql://eden:eden@pg-patient-records:5432/patient_records
+      PG_PATIENT_RECORDS_READ_URL: postgresql://reader:reader_pass@pg-patient-records:5432/patient_records
+      PG_PATIENT_RECORDS_WRITE_URL: postgresql://writer:writer_pass@pg-patient-records:5432/patient_records
+      PG_BILLING_URL: postgresql://eden:eden@pg-billing:5432/billing
+      PG_BILLING_READ_URL: postgresql://reader:reader_pass@pg-billing:5432/billing
+      PG_BILLING_WRITE_URL: postgresql://writer:writer_pass@pg-billing:5432/billing
+      PG_CMS_CLAIMS_URL: postgresql://eden:eden@pg-cms-claims:5432/cms_claims
+      PG_CMS_CLAIMS_READ_URL: postgresql://reader:reader_pass@pg-cms-claims:5432/cms_claims
+      PG_CMS_CLAIMS_WRITE_URL: postgresql://writer:writer_pass@pg-cms-claims:5432/cms_claims
+      MONGO_CLINICAL_URL: mongodb://eden:eden@mongo-clinical-docs:27017
+      MONGO_CLINICAL_DB: clinical
+      MONGO_CLINICAL_READ_URL: mongodb://reader:reader_pass@mongo-clinical-docs:27017
+      MONGO_CLINICAL_WRITE_URL: mongodb://writer:writer_pass@mongo-clinical-docs:27017
+      MONGO_LAB_URL: mongodb://eden:eden@mongo-lab-results:27017
+      MONGO_LAB_DB: laboratory
+      MONGO_LAB_READ_URL: mongodb://reader:reader_pass@mongo-lab-results:27017
+      MONGO_LAB_WRITE_URL: mongodb://writer:writer_pass@mongo-lab-results:27017
+      CLICKHOUSE_URL: http://eden:eden@clickhouse-analytics:8123/analytics
+      CLICKHOUSE_READ_URL: http://reader:reader_pass@clickhouse-analytics:8123/analytics
+      CLICKHOUSE_WRITE_URL: http://writer:writer_pass@clickhouse-analytics:8123/analytics
+      REDIS_URL: redis://default:eden@redis-alerts:6379
+      REDIS_READ_URL: redis://reader:reader_pass@redis-alerts:6379
+      REDIS_WRITE_URL: redis://writer:writer_pass@redis-alerts:6379
+      WEAVIATE_URL: http://weaviate-clinical:8080
+      EDEN_PG_PATIENT_RECORDS_URL: postgresql://eden:eden@host.docker.internal:5632/patient_records
+      EDEN_PG_PATIENT_RECORDS_READ_URL: postgresql://reader:reader_pass@host.docker.internal:5632/patient_records
+      EDEN_PG_PATIENT_RECORDS_WRITE_URL: postgresql://writer:writer_pass@host.docker.internal:5632/patient_records
+      EDEN_PG_BILLING_URL: postgresql://eden:eden@host.docker.internal:5633/billing
+      EDEN_PG_BILLING_READ_URL: postgresql://reader:reader_pass@host.docker.internal:5633/billing
+      EDEN_PG_BILLING_WRITE_URL: postgresql://writer:writer_pass@host.docker.internal:5633/billing
+      EDEN_PG_CMS_CLAIMS_URL: postgresql://eden:eden@host.docker.internal:5634/cms_claims
+      EDEN_PG_CMS_CLAIMS_READ_URL: postgresql://reader:reader_pass@host.docker.internal:5634/cms_claims
+      EDEN_PG_CMS_CLAIMS_WRITE_URL: postgresql://writer:writer_pass@host.docker.internal:5634/cms_claims
+      EDEN_MONGO_CLINICAL_URL: mongodb://eden:eden@host.docker.internal:27217
+      EDEN_MONGO_CLINICAL_READ_URL: mongodb://reader:reader_pass@host.docker.internal:27217
+      EDEN_MONGO_CLINICAL_WRITE_URL: mongodb://writer:writer_pass@host.docker.internal:27217
+      EDEN_MONGO_LAB_URL: mongodb://eden:eden@host.docker.internal:27218
+      EDEN_MONGO_LAB_READ_URL: mongodb://reader:reader_pass@host.docker.internal:27218
+      EDEN_MONGO_LAB_WRITE_URL: mongodb://writer:writer_pass@host.docker.internal:27218
+      EDEN_CLICKHOUSE_URL: http://eden:eden@host.docker.internal:8323/analytics
+      EDEN_CLICKHOUSE_READ_URL: http://reader:reader_pass@host.docker.internal:8323/analytics
+      EDEN_CLICKHOUSE_WRITE_URL: http://writer:writer_pass@host.docker.internal:8323/analytics
+      EDEN_REDIS_URL: redis://default:eden@host.docker.internal:6579
+      EDEN_REDIS_READ_URL: redis://reader:reader_pass@host.docker.internal:6579
+      EDEN_REDIS_WRITE_URL: redis://writer:writer_pass@host.docker.internal:6579
+      EDEN_WEAVIATE_URL: http://host.docker.internal:8280
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      GOOGLE_WORKSPACE_CLIENT_ID: ${GOOGLE_WORKSPACE_CLIENT_ID:-}
+      GOOGLE_WORKSPACE_PROJECT_ID: ${GOOGLE_WORKSPACE_PROJECT_ID:-}
+      GOOGLE_WORKSPACE_AUTH_URI: ${GOOGLE_WORKSPACE_AUTH_URI:-https://accounts.google.com/o/oauth2/auth}
+      GOOGLE_WORKSPACE_TOKEN_URI: ${GOOGLE_WORKSPACE_TOKEN_URI:-https://oauth2.googleapis.com/token}
+      GOOGLE_WORKSPACE_AUTH_PROVIDER_X509_CERT_URL: ${GOOGLE_WORKSPACE_AUTH_PROVIDER_X509_CERT_URL:-https://www.googleapis.com/oauth2/v1/certs}
+      GOOGLE_WORKSPACE_CLIENT_SECRET: ${GOOGLE_WORKSPACE_CLIENT_SECRET:-}
+      GOOGLE_WORKSPACE_ACCESS_TOKEN: ${GOOGLE_WORKSPACE_ACCESS_TOKEN:-}
+      GOOGLE_WORKSPACE_API_BASE_URL: ${GOOGLE_WORKSPACE_API_BASE_URL:-https://www.googleapis.com}
+      AZURE_APP_ID: ${AZURE_APP_ID:-}
+      AZURE_DISPLAY_NAME: ${AZURE_DISPLAY_NAME:-}
+      AZURE_PASSWORD: ${AZURE_PASSWORD:-}
+      AZURE_TENANT: ${AZURE_TENANT:-}
+      AZURE_SUBSCRIPTION_ID: ${AZURE_SUBSCRIPTION_ID:-}
+      AZURE_API_BASE_URL: ${AZURE_API_BASE_URL:-https://management.azure.com}
+      GITLAB_ACCESS_TOKEN: ${GITLAB_ACCESS_TOKEN:-}
+      GITLAB_API_BASE_URL: ${GITLAB_API_BASE_URL:-https://gitlab.com/api/v4}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-nano}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
+      DD_API_KEY: ${DD_API_KEY:-}
+      DD_APP_KEY: ${DD_APP_KEY:-}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      ERASER_API_KEY: ${ERASER_API_KEY:-}
+      EDEN_NEW_ORG_SECRET: ${EDEN_NEW_ORG_SECRET:-neworgsecret}
+      HTTP_TIMEOUT: ${HTTP_TIMEOUT:-30}
+      SETUP_RETRIES: ${SETUP_RETRIES:-5}
+      RUST_LOG: adam_demo=info
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - adam-network
+
+volumes:
+  pg_patients_data:
+  pg_billing_data:
+  pg_cms_claims_data:
+  mongo_clinical_data:
+  mongo_lab_data:
+  ch_billing_data:
+  redis_alerts_data:
+  weaviate_clinical_data:
+  hf_cache:
+
+networks:
+  adam-network:
+    driver: bridge

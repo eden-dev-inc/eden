@@ -1,0 +1,9 @@
+.env
+private/
+
+# Pre-downloaded HuggingFace datasets (~10 GB)
+init/data/
+init/.venv/
+
+# Rust build artifacts
+app/target/

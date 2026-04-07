@@ -1,0 +1,3 @@
+user reader on >reader_pass ~* &* +@read +@connection +ping +info +dbsize
+user writer on >writer_pass ~* &* +@read +@write +@connection +ping +info +dbsize
+user default on >eden ~* &* +@all

@@ -1,0 +1,42 @@
+name: analytics-demo
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/analytics-demo.yml"
+      - "examples/analytics-demo/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/analytics-demo.yml"
+      - "examples/analytics-demo/**"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/analytics-demo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: examples/analytics-demo -> examples/analytics-demo/target
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Unit and binary tests
+        run: cargo test --lib --bins
+
+      - name: Runtime coverage
+        run: cargo test --test runtime_coverage -- --test-threads=1

@@ -1,0 +1,281 @@
+name: adam-demo-tech
+
+## Tech / SaaS vertical
+##
+## Simulates a tech company with data silos across departments:
+##
+##   pg-network-security   — Postgres: Network intrusion detection (SecOps)
+##                           Dataset: UNSW-NB15 (~2.5M network flows)
+##   pg-saas-billing       — Postgres: SaaS subscriptions, invoices, API keys (Finance)
+##                           Dataset: synthetic from HF user/org patterns
+##   clickhouse-events     — ClickHouse: User behavior event stream (Product Analytics)
+##                           Dataset: ecommerce-behavior-data (~285M events)
+##   mongo-issues          — MongoDB: Issue tracker & incident reports (Engineering)
+##                           Dataset: the-stack-github-issues (~31M issues)
+##   redis-sessions        — Redis: Active sessions, rate limits, feature flags (Platform)
+##   weaviate-logs         — Weaviate: Log & incident semantic search (SRE/On-call)
+
+services:
+  # ── Postgres #1: Network Security (SecOps silo) ──
+  pg-network-security:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: eden
+      POSTGRES_PASSWORD: eden
+      POSTGRES_DB: network_security
+    ports:
+      - "5632:5432"
+    volumes:
+      - pg_netsec_data:/var/lib/postgresql/data
+      - ./init/schemas/tech/postgres_network_security.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./init/schemas/rbac_postgres.sql:/docker-entrypoint-initdb.d/02-rbac.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eden -d network_security"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  # ── Postgres #2: SaaS Billing (Finance silo) ──
+  pg-saas-billing:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: eden
+      POSTGRES_PASSWORD: eden
+      POSTGRES_DB: saas_billing
+    ports:
+      - "5633:5432"
+    volumes:
+      - pg_billing_data:/var/lib/postgresql/data
+      - ./init/schemas/tech/postgres_saas_billing.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./init/schemas/rbac_postgres.sql:/docker-entrypoint-initdb.d/02-rbac.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eden -d saas_billing"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  # ── ClickHouse: User Behavior Analytics (Product Analytics silo) ──
+  clickhouse-events:
+    image: clickhouse/clickhouse-server:24
+    environment:
+      CLICKHOUSE_USER: eden
+      CLICKHOUSE_PASSWORD: eden
+      CLICKHOUSE_DB: analytics
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8323:8123"
+      - "9200:9000"
+    volumes:
+      - ch_events_data:/var/lib/clickhouse
+      - ./init/schemas/tech/clickhouse_events.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./init/schemas/rbac_clickhouse.sql:/docker-entrypoint-initdb.d/02-rbac.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user eden --password eden --query 'SELECT 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  # ── MongoDB: Issue Tracker & Incidents (Engineering silo) ──
+  mongo-issues:
+    image: mongo:7
+    command: ["mongod", "--bind_ip_all", "--auth"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: eden
+      MONGO_INITDB_ROOT_PASSWORD: eden
+      MONGO_INITDB_DATABASE: issues
+    ports:
+      - "27217:27017"
+    volumes:
+      - mongo_issues_data:/data/db
+      - ./init/schemas/tech/rbac_mongo.js:/docker-entrypoint-initdb.d/02-rbac.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "mongodb://eden:eden@127.0.0.1:27017/admin?directConnection=true", "--eval", "quit(db.adminCommand({ ping: 1 }).ok ? 0 : 2)"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    networks:
+      - adam-network
+
+  # ── Redis: Sessions, Rate Limits, Feature Flags (Platform silo) ──
+  redis-sessions:
+    image: redis:7-alpine
+    command: ["redis-server", "--aclfile", "/etc/redis/users.acl"]
+    ports:
+      - "6579:6379"
+    volumes:
+      - redis_sessions_data:/data
+      - ./init/schemas/redis_users.acl:/etc/redis/users.acl:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "--user", "default", "--pass", "eden", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  # ── Weaviate: Log & Incident Search (SRE/On-call silo) ──
+  weaviate-logs:
+    image: cr.weaviate.io/semitechnologies/weaviate:1.28.4
+    ports:
+      - "8280:8080"
+      - "50251:50051"
+    volumes:
+      - weaviate_logs_data:/var/lib/weaviate
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODULE: none
+      CLUSTER_HOSTNAME: node1
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/.well-known/ready || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - adam-network
+
+  # ── Data Initializer ──
+  data-init:
+    build:
+      context: ./init
+      dockerfile: Dockerfile
+    depends_on:
+      pg-network-security:
+        condition: service_healthy
+      pg-saas-billing:
+        condition: service_healthy
+      mongo-issues:
+        condition: service_healthy
+      redis-sessions:
+        condition: service_healthy
+      weaviate-logs:
+        condition: service_healthy
+    environment:
+      VERTICAL: tech
+      DISABLE_CLICKHOUSE_INIT: ${DISABLE_CLICKHOUSE_INIT:-1}
+      SCALE: ${SCALE:-demo}
+      HF_DATASETS_CACHE: /cache
+      # Each silo has its own connection URL
+      PG_NETWORK_SECURITY_URL: postgresql://eden:eden@pg-network-security:5432/network_security
+      PG_SAAS_BILLING_URL: postgresql://eden:eden@pg-saas-billing:5432/saas_billing
+      CLICKHOUSE_HOST: clickhouse-events
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_USER: eden
+      CLICKHOUSE_PASSWORD: eden
+      MONGO_URL: mongodb://eden:eden@mongo-issues:27017
+      MONGO_DB: issues
+      REDIS_URL: redis://default:eden@redis-sessions:6379
+      WEAVIATE_URL: http://weaviate-logs:8080
+    volumes:
+      - hf_cache:/cache
+      - ./init/data:/app/data:ro
+    networks:
+      - adam-network
+
+  # ── ADAM Query Engine ──
+  adam-app:
+    profiles: [app]
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    environment:
+      VERTICAL: tech
+      EDEN_API_URL: ${EDEN_API_URL:-http://host.docker.internal:8000}
+      EDEN_ORG_ID: ${EDEN_ORG_ID:-adam-demo}
+      EDEN_JWT_TOKEN: ${EDEN_JWT_TOKEN:-}
+      BIND_ADDRESS: 0.0.0.0:3000
+      QUERIES_PER_SECOND: ${QUERIES_PER_SECOND:-100}
+      MAX_WORKERS: ${MAX_WORKERS:-50}
+      DISABLE_CLICKHOUSE_ENDPOINTS: ${DISABLE_CLICKHOUSE_ENDPOINTS:-1}
+      # Internal silo URLs
+      PG_NETWORK_SECURITY_URL: postgresql://eden:eden@pg-network-security:5432/network_security
+      PG_NETWORK_SECURITY_READ_URL: postgresql://reader:reader_pass@pg-network-security:5432/network_security
+      PG_NETWORK_SECURITY_WRITE_URL: postgresql://writer:writer_pass@pg-network-security:5432/network_security
+      PG_SAAS_BILLING_URL: postgresql://eden:eden@pg-saas-billing:5432/saas_billing
+      PG_SAAS_BILLING_READ_URL: postgresql://reader:reader_pass@pg-saas-billing:5432/saas_billing
+      PG_SAAS_BILLING_WRITE_URL: postgresql://writer:writer_pass@pg-saas-billing:5432/saas_billing
+      CLICKHOUSE_URL: http://eden:eden@clickhouse-events:8123/analytics
+      CLICKHOUSE_READ_URL: http://reader:reader_pass@clickhouse-events:8123/analytics
+      CLICKHOUSE_WRITE_URL: http://writer:writer_pass@clickhouse-events:8123/analytics
+      MONGO_URL: mongodb://eden:eden@mongo-issues:27017
+      MONGO_DB: issues
+      MONGO_READ_URL: mongodb://reader:reader_pass@mongo-issues:27017
+      MONGO_WRITE_URL: mongodb://writer:writer_pass@mongo-issues:27017
+      REDIS_URL: redis://default:eden@redis-sessions:6379
+      REDIS_READ_URL: redis://reader:reader_pass@redis-sessions:6379
+      REDIS_WRITE_URL: redis://writer:writer_pass@redis-sessions:6379
+      WEAVIATE_URL: http://weaviate-logs:8080
+      # Eden-facing URLs (host-accessible)
+      EDEN_PG_NETWORK_SECURITY_URL: postgresql://eden:eden@host.docker.internal:5632/network_security
+      EDEN_PG_NETWORK_SECURITY_READ_URL: postgresql://reader:reader_pass@host.docker.internal:5632/network_security
+      EDEN_PG_NETWORK_SECURITY_WRITE_URL: postgresql://writer:writer_pass@host.docker.internal:5632/network_security
+      EDEN_PG_SAAS_BILLING_URL: postgresql://eden:eden@host.docker.internal:5633/saas_billing
+      EDEN_PG_SAAS_BILLING_READ_URL: postgresql://reader:reader_pass@host.docker.internal:5633/saas_billing
+      EDEN_PG_SAAS_BILLING_WRITE_URL: postgresql://writer:writer_pass@host.docker.internal:5633/saas_billing
+      EDEN_CLICKHOUSE_URL: http://eden:eden@host.docker.internal:8323/analytics
+      EDEN_CLICKHOUSE_READ_URL: http://reader:reader_pass@host.docker.internal:8323/analytics
+      EDEN_CLICKHOUSE_WRITE_URL: http://writer:writer_pass@host.docker.internal:8323/analytics
+      EDEN_MONGO_URL: mongodb://eden:eden@host.docker.internal:27217
+      EDEN_MONGO_READ_URL: mongodb://reader:reader_pass@host.docker.internal:27217
+      EDEN_MONGO_WRITE_URL: mongodb://writer:writer_pass@host.docker.internal:27217
+      EDEN_REDIS_URL: redis://default:eden@host.docker.internal:6579
+      EDEN_REDIS_READ_URL: redis://reader:reader_pass@host.docker.internal:6579
+      EDEN_REDIS_WRITE_URL: redis://writer:writer_pass@host.docker.internal:6579
+      EDEN_WEAVIATE_URL: http://host.docker.internal:8280
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      GOOGLE_WORKSPACE_CLIENT_ID: ${GOOGLE_WORKSPACE_CLIENT_ID:-}
+      GOOGLE_WORKSPACE_PROJECT_ID: ${GOOGLE_WORKSPACE_PROJECT_ID:-}
+      GOOGLE_WORKSPACE_AUTH_URI: ${GOOGLE_WORKSPACE_AUTH_URI:-https://accounts.google.com/o/oauth2/auth}
+      GOOGLE_WORKSPACE_TOKEN_URI: ${GOOGLE_WORKSPACE_TOKEN_URI:-https://oauth2.googleapis.com/token}
+      GOOGLE_WORKSPACE_AUTH_PROVIDER_X509_CERT_URL: ${GOOGLE_WORKSPACE_AUTH_PROVIDER_X509_CERT_URL:-https://www.googleapis.com/oauth2/v1/certs}
+      GOOGLE_WORKSPACE_CLIENT_SECRET: ${GOOGLE_WORKSPACE_CLIENT_SECRET:-}
+      GOOGLE_WORKSPACE_ACCESS_TOKEN: ${GOOGLE_WORKSPACE_ACCESS_TOKEN:-}
+      GOOGLE_WORKSPACE_API_BASE_URL: ${GOOGLE_WORKSPACE_API_BASE_URL:-https://www.googleapis.com}
+      AZURE_APP_ID: ${AZURE_APP_ID:-}
+      AZURE_DISPLAY_NAME: ${AZURE_DISPLAY_NAME:-}
+      AZURE_PASSWORD: ${AZURE_PASSWORD:-}
+      AZURE_TENANT: ${AZURE_TENANT:-}
+      AZURE_SUBSCRIPTION_ID: ${AZURE_SUBSCRIPTION_ID:-}
+      AZURE_API_BASE_URL: ${AZURE_API_BASE_URL:-https://management.azure.com}
+      GITLAB_ACCESS_TOKEN: ${GITLAB_ACCESS_TOKEN:-}
+      GITLAB_API_BASE_URL: ${GITLAB_API_BASE_URL:-https://gitlab.com/api/v4}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-nano}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
+      DD_API_KEY: ${DD_API_KEY:-}
+      DD_APP_KEY: ${DD_APP_KEY:-}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      ERASER_API_KEY: ${ERASER_API_KEY:-}
+      EDEN_NEW_ORG_SECRET: ${EDEN_NEW_ORG_SECRET:-neworgsecret}
+      HTTP_TIMEOUT: ${HTTP_TIMEOUT:-30}
+      SETUP_RETRIES: ${SETUP_RETRIES:-5}
+      RUST_LOG: adam_demo=info
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - adam-network
+
+volumes:
+  pg_netsec_data:
+  pg_billing_data:
+  ch_events_data:
+  mongo_issues_data:
+  redis_sessions_data:
+  weaviate_logs_data:
+  hf_cache:
+
+networks:
+  adam-network:
+    driver: bridge
