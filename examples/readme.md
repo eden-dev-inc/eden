@@ -10,7 +10,7 @@ Eden is a unified data infrastructure platform that provides seamless access to 
 
 ### [adam-demo](./adam-demo/)
 
-A cross-database AI inference demo for Eden's ADAM feature. Spins up PostgreSQL, MongoDB, Redis, ClickHouse, and Qdrant via Docker Compose, then automatically populates them with enterprise datasets from Hugging Face.
+A cross-database AI inference demo for Eden's ADAM feature. Spins up PostgreSQL, MongoDB, Redis, ClickHouse, and Weviate via Docker Compose, then automatically populates them with enterprise datasets from Hugging Face.
 
 **Features:**
 - Five databases running locally with Docker
