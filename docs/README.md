@@ -1,6 +1,6 @@
-# Eden-MDBS Public Documentation
+# Eden Public Documentation
 
-This directory contains the public-facing documentation for Eden-MDBS, built with [mdBook](https://rust-lang.github.io/mdBook/).
+This directory contains the public-facing documentation for Eden, built with [mdBook](https://rust-lang.github.io/mdBook/).
 
 ## Quick Start
 
