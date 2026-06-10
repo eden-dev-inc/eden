@@ -1,0 +1,43 @@
+[package]
+name = "redis-core"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+infra-tests = []
+
+[dependencies]
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+ep-core = { path = "../ep-core", default-features = false }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+eden_config = { path = "../../eden_config" }
+
+deadpool = { workspace = true }
+tokio-rustls = { workspace = true }
+tokio = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+function_name = { workspace = true }
+borsh = { workspace = true }
+redis-protocol = { workspace = true }
+resp-wire = { workspace = true }
+serde = { workspace = true }
+utoipa = { workspace = true }
+log = { workspace = true }
+bytes = { workspace = true }
+hex = { workspace = true }
+itoa = { workspace = true }
+postgres = { workspace = true }
+serde_json = { workspace = true }
+redis = { workspace = true }
+memchr = { workspace = true }
+arc-swap = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+testcontainers-modules = { workspace = true }

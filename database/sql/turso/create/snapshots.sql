@@ -1,0 +1,25 @@
+CREATE TABLE IF NOT EXISTS snapshots
+(
+    id                    TEXT UNIQUE NOT NULL,
+    uuid                  TEXT PRIMARY KEY NOT NULL,
+    description           TEXT,
+    status                TEXT DEFAULT 'Pending',
+    source_endpoint       TEXT NOT NULL,
+    target_endpoint       TEXT NOT NULL,
+    data                  TEXT DEFAULT '{}',
+    preserve_ttl          INTEGER DEFAULT 1,
+    schedule              TEXT,
+    last_run_at           TEXT,
+    next_run_at           TEXT,
+    job_uuid              TEXT,
+    source_mode           TEXT DEFAULT 'scan',
+    filter                TEXT,
+    cdc_config            TEXT,
+    last_lsn              TEXT,
+    write_template_uuid   TEXT,
+    read_template_uuid    TEXT,
+    created_by            TEXT NOT NULL,
+    updated_by            TEXT NOT NULL,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+);

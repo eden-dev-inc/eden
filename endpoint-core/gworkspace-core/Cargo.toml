@@ -1,0 +1,24 @@
+[package]
+name = "gworkspace-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+ep-core = { path = "../ep-core", default-features = false }
+function_name = { workspace = true }
+utoipa = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+borsh = { workspace = true }
+
+deadpool = { workspace = true }
+
+reqwest = { workspace = true }
+opentelemetry = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

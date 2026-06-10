@@ -1,0 +1,128 @@
+[package]
+name = "ep-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eden-core = { path = "../eden_core" }
+ep-core = { path = "../endpoint-core/ep-core", default-features = false }
+endpoint = { path = "../endpoints/core", default-features = false }
+database = { path = "../database", default-features = false }
+endpoint-types = { path = "../endpoints/endpoint-types" }
+llm-core = { path = "../endpoint-core/llm-core", default-features = false, optional = true }
+
+base64 = { workspace = true }
+bytes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+function_name = { workspace = true }
+tonic = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+opentelemetry = { workspace = true }
+borsh = { workspace = true }
+futures = { workspace = true }
+utoipa = { workspace = true }
+uuid = { workspace = true }
+
+[features]
+default = []
+all = [
+    "aws",
+    "azure",
+    "cassandra",
+    "clickhouse",
+    "databricks",
+    "datadog",
+    "elasticache",
+    "eraser",
+    "function",
+    "gitlab",
+    "gworkspace",
+    "http",
+    "llm",
+    "mongo",
+    "mssql",
+    "mysql",
+    "oracle",
+    "pinecone",
+    "postgres",
+    "posthog",
+    "rds",
+    "redis",
+    "s3",
+    "salesforce",
+    "snowflake",
+    "tavily",
+    "weaviate",
+]
+embedded-db = ["database/embedded-db", "endpoint/embedded-db", "ep-core/embedded-db", "endpoint-types/embedded-db"]
+infra-tests = ["all"]
+aws = ["endpoint/aws", "database/aws", "function", "s3", "rds", "elasticache"]
+azure = ["endpoint/azure", "database/azure"]
+cassandra = ["endpoint/cassandra", "database/cassandra"]
+clickhouse = ["endpoint/clickhouse", "database/clickhouse"]
+databricks = ["endpoint/databricks", "database/databricks"]
+datadog = ["endpoint/datadog", "database/datadog"]
+elasticache = ["endpoint/elasticache", "database/elasticache", "redis"]
+eraser = ["endpoint/eraser", "database/eraser"]
+function = ["endpoint/function", "database/function"]
+gitlab = ["endpoint/gitlab", "database/gitlab"]
+google_workspace = ["gworkspace"]
+gworkspace = ["endpoint/gworkspace", "database/gworkspace"]
+http = ["endpoint/http", "database/http"]
+llm = ["endpoint/llm", "dep:llm-core", "database/llm"]
+mongo = ["endpoint/mongo", "database/mongo"]
+mssql = ["endpoint/mssql", "database/mssql"]
+mysql = ["endpoint/mysql", "database/mysql"]
+oracle = ["endpoint/oracle", "database/oracle"]
+pinecone = ["endpoint/pinecone", "database/pinecone"]
+postgres = ["endpoint/postgres", "database/postgres"]
+posthog = ["endpoint/posthog", "database/posthog"]
+rds = ["endpoint/rds", "database/rds", "postgres"]
+redis = ["endpoint/redis", "database/redis"]
+s3 = ["endpoint/s3", "database/s3"]
+salesforce = ["endpoint/salesforce", "database/salesforce"]
+snowflake = ["endpoint/snowflake", "database/snowflake"]
+tavily = ["endpoint/tavily", "database/tavily"]
+weaviate = ["endpoint/weaviate", "database/weaviate"]
+
+[dev-dependencies]
+database = { path = "../database", default-features = false, features = ["test-utils"] }
+aws-core = { path = "../endpoint-core/aws-core", default-features = false }
+azure-core = { path = "../endpoint-core/azure-core", default-features = false }
+cassandra-core = { path = "../endpoint-core/cassandra-core", default-features = false }
+clickhouse-core = { path = "../endpoint-core/clickhouse-core", default-features = false }
+databricks-core = { path = "../endpoint-core/databricks-core", default-features = false }
+datadog-core = { path = "../endpoint-core/datadog-core", default-features = false }
+eraser-core = { path = "../endpoint-core/eraser-core", default-features = false }
+function-core = { path = "../endpoint-core/function-core", default-features = false }
+gitlab-core = { path = "../endpoint-core/gitlab-core", default-features = false }
+gworkspace-core = { path = "../endpoint-core/gworkspace-core", default-features = false }
+http-core = { path = "../endpoint-core/http-core", default-features = false }
+mongo-core = { path = "../endpoint-core/mongo-core", default-features = false }
+mssql-core = { path = "../endpoint-core/mssql-core", default-features = false }
+mysql-core = { path = "../endpoint-core/mysql-core", default-features = false }
+oracle-core = { path = "../endpoint-core/oracle-core", default-features = false }
+pinecone-core = { path = "../endpoint-core/pinecone-core", default-features = false }
+postgres-core = { path = "../endpoint-core/postgres-core", default-features = false }
+posthog-core = { path = "../endpoint-core/posthog-core", default-features = false }
+redis-core = { path = "../endpoint-core/redis-core", default-features = false }
+s3-core = { path = "../endpoint-core/s3-core", default-features = false }
+salesforce-core = { path = "../endpoint-core/salesforce-core", default-features = false }
+snowflake-core = { path = "../endpoint-core/snowflake-core", default-features = false }
+tavily-core = { path = "../endpoint-core/tavily-core", default-features = false }
+weaviate-core = { path = "../endpoint-core/weaviate-core", default-features = false }
+actix-web = { workspace = true }
+rustls = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+serial_test = { workspace = true }
+testcontainers-modules = { workspace = true }
+mongodb = { workspace = true }
+httpmock = { workspace = true }
+reqwest = { workspace = true }
+
+[lints]
+workspace = true

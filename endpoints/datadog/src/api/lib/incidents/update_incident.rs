@@ -1,0 +1,85 @@
+use crate::api::lib::DatadogApi;
+use crate::api::wrapper::output::DatadogJsonOutput;
+use crate::request::DatadogRequest;
+use crate::{ApiInfo, ReqType, RunOutput, ToOutput};
+use datadog_api_client::datadogV2::api_incidents::{IncidentsAPI, UpdateIncidentOptionalParams};
+use datadog_api_client::datadogV2::model::IncidentUpdateRequest;
+use datadog_core::{DatadogAsync, DatadogTx};
+use ep_core::{EpOutput, impl_simple_operation};
+use error::{EpError, ResultEP};
+use format::endpoint::EpKind;
+use function_name::named;
+use serde_json::Value;
+use telemetry::FastSpanAttribute;
+use telemetry::TelemetryWrapper;
+
+const API_INFO: ApiInfo<DatadogApi, UpdateIncidentInput> = ApiInfo::new(
+    EpKind::Datadog,
+    DatadogApi::UpdateIncident,
+    "Updates an existing incident in Datadog",
+    ReqType::Write,
+    true,
+);
+
+crate::datadog_endpoint! {
+    UpdateIncident,
+    API_INFO,
+    struct {
+        incident_id: String,
+        body: Value
+    }
+}
+
+impl_simple_operation!(SimpleInput, DatadogAsync, DatadogTx, DatadogApi, DatadogRequest);
+
+impl SimpleInput {
+    #[named]
+    async fn run_async_generic(&self, context: DatadogAsync, telemetry_wrapper: &mut TelemetryWrapper) -> ResultEP<Box<dyn EpOutput>> {
+        let mut span = telemetry_wrapper.client_tracer(format!("datadog.{}.{}", API_INFO.api, function_name!()));
+
+        let client = context.get().await.map_err(EpError::request)?;
+        let api = IncidentsAPI::with_config(client.dd_config.clone());
+        let typed_body: IncidentUpdateRequest = serde_json::from_value(self.body.clone()).map_err(EpError::serde)?;
+        let result = api
+            .update_incident(self.incident_id.clone(), typed_body, UpdateIncidentOptionalParams::default())
+            .await
+            .map_err(EpError::request)?;
+
+        span.add_event("received result from datadog", vec![FastSpanAttribute::new("type", API_INFO.api.to_string())]);
+
+        Ok(Box::new(DatadogJsonOutput(serde_json::to_value(result).map_err(EpError::serde)?).to_output()) as Box<dyn EpOutput>)
+    }
+
+    #[named]
+    fn run_transaction_generic(&self, _context: &mut DatadogTx, _telemetry_wrapper: &mut TelemetryWrapper) {
+        todo!("")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_incident_builder_serde() {
+        let body = serde_json::json!({"data": {"type": "incidents"}});
+        let input = UpdateIncidentInputBuilder::default()
+            .incident_id("abc-123")
+            .body(body.clone())
+            .build()
+            .expect("Failed to build UpdateIncidentInput");
+
+        let json = serde_json::to_value(&input).expect("Failed to serialize");
+        assert_eq!(json["type"], "update_incident");
+        assert_eq!(json["incident_id"], "abc-123");
+        assert_eq!(json["body"], body);
+    }
+
+    #[test]
+    fn update_incident_deserialize() {
+        let body = serde_json::json!({"data": {"type": "incidents"}});
+        let json = serde_json::json!({"incident_id": "xyz-789", "body": body});
+        let input: UpdateIncidentInput = serde_json::from_value(json).expect("Failed to deserialize");
+        assert_eq!(input.incident_id, "xyz-789");
+    }
+}

@@ -1,0 +1,16 @@
+pub(crate) mod activity;
+pub(crate) mod bgwriter;
+pub(crate) mod connections;
+pub(crate) mod database;
+pub(crate) mod extensions;
+pub(crate) mod indexes;
+pub(crate) mod locks;
+pub(crate) mod replication;
+pub(crate) mod schema_graph;
+pub(crate) mod settings;
+pub(crate) mod stats;
+pub(crate) mod tables;
+pub(crate) mod transactions;
+pub(crate) mod utils;
+pub(crate) mod vacuum;
+pub(crate) mod wal;

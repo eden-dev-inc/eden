@@ -1,0 +1,49 @@
+[package]
+name = "eden_gateway"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Sub-crates
+eden-gateway-core = { path = "./core" }
+gateway-agent = { path = "./agent", optional = true }
+gateway-llm = { path = "./llm", default-features = false, optional = true }
+gateway-redis = { path = "./redis", default-features = false, optional = true }
+gateway-postgres = { path = "./postgres", default-features = false, optional = true }
+gateway-mongo = { path = "./mongo", default-features = false, optional = true }
+
+# Shared dependencies for the root gateway crate (lib.rs, processor.rs)
+ep-runtime = { path = "../ep-runtime", default-features = false }
+eden-core = { path = "../eden_core" }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+endpoint-schema = { path = "../endpoint-core/endpoint-schema", default-features = false }
+ep-core = { path = "../endpoint-core/ep-core", default-features = false }
+endpoint-core = { path = "../endpoint-core", default-features = false }
+endpoints = { path = "../endpoints", default-features = false }
+database = { path = "../database", default-features = false }
+
+bytes = { workspace = true }
+bytes-handoff = { workspace = true }
+dashmap = { workspace = true }
+function_name = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+default = []
+redis = ["dep:gateway-redis", "database/redis", "endpoint-core/redis", "endpoints/redis", "ep-runtime/redis"]
+postgres = ["dep:gateway-postgres", "database/postgres", "endpoint-core/postgres", "endpoints/postgres", "ep-runtime/postgres"]
+mongo = ["dep:gateway-mongo", "database/mongo", "endpoint-core/mongo", "endpoints/mongo", "ep-runtime/mongo"]
+agent = ["dep:gateway-agent"]
+llm = ["agent", "dep:gateway-llm", "database/llm", "endpoint-core/llm", "endpoints/llm", "ep-runtime/llm"]
+embedded-db = ["ep-runtime/embedded-db", "database/embedded-db", "gateway-postgres?/embedded-db", "endpoint-schema/embedded-db", "endpoints/embedded-db"]
+
+# Logging level features
+log-trace = ["eden_logger_internal/log-trace"]
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,58 @@
+[package]
+name = "ep-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+auth = { path = "../../eden_core/auth" }
+error = { path = "../../eden_core/error" }
+json = { path = "../../eden_core/json" }
+format = { path = "../../eden_core/format" }
+request = { path = "../../eden_core/request" }
+telemetry = { path = "../../eden_core/telemetry" }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+
+paste = { workspace = true }
+function_name = { workspace = true }
+utoipa = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+borsh = { workspace = true }
+redis = { workspace = true }
+postgres = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+tokio-postgres = { workspace = true }
+opentelemetry = { workspace = true }
+chrono = { workspace = true }
+bytes = { workspace = true }
+deadpool = { workspace = true }
+actix-web = { workspace = true }
+postgres-types = { workspace = true }
+rustc-hash = { workspace = true }
+dashmap = { workspace = true }
+uuid = { workspace = true }
+lru = { workspace = true }
+lazy_static = { workspace = true }
+linkme = { workspace = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+rand = { workspace = true }
+rsa = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
+turso = { workspace = true, optional = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[features]
+default = []
+rayon = []
+embedded-db = ["dep:turso"]
+
+[lints]
+workspace = true

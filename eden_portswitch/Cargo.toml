@@ -1,0 +1,13 @@
+[package]
+name = "eden-portswitch"
+version = "0.1.0"
+edition = "2021"
+description = "Linux port redirection tool for Eden database migration proxy"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+thiserror = "1"
+log = "0.4"
+env_logger = "0.11"
+users = "0.11"

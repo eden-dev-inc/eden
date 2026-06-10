@@ -1,0 +1,124 @@
+## Coding Guidelines
+
+### Rust Code Style
+
+- **Edition**: Rust 2024
+- **Formatting**: Use the project's specific formatting rules:
+  ```bash
+  # Format all code
+  cargo fmt --all
+  ```
+- **Naming**:
+  - Modules: `snake_case`
+  - Types: `PascalCase`
+  - Traits: Verb-noun combinations
+  - **Important**: Names must describe what code does, not implementation details or history
+  - **Avoid**: Implementation details ("JsonParserImpl", "RedisWrapper"), temporal context ("NewAPI",
+    "LegacyHandler"), pattern names unless they add clarity
+- **Imports**: All `use` statements at top of file/module (avoid per-function imports)
+- **Avoid deep nesting**: Rust code, with its extensive use of matching over ADT, can trend
+  towards deeply nested code that becomes increasingly difficult to read. To avoid this there are a
+  number of techniques:
+  - **Early Returns**: Short-circuit out of your function on _negative_ conditions, leaving the
+    _positive_ case for last. This helps the reader understand the codeflow and emphasizes the
+    function's overall purpose.
+    - Handle error cases and invalid conditions first
+    - Return early with `?` operator for `Result`/`Option` types
+    - Makes the "happy path" clear and uncluttered
+  - **Let-else statements**: Use `let else` for conditional binding with early returns on failure
+  - **Avoid `else` branches**: Generally prefer early returns over `else` branches on `if`
+    statements
+  - **Factor out into separate functions**: Break complicated deeply nested blocks into smaller,
+    focused functions
+
+#### Example: Transforming Nested Code to Early Returns
+
+**Before (Deeply Nested):**
+
+```rust
+fn process_user_input(input: &str) -> Result<User, Error> {
+    if !input.is_empty() {
+        let trimmed = input.trim();
+        if trimmed.len() >= 3 {
+            if let Ok(user) = User::parse(trimmed) {
+                if user.is_valid() {
+                    Ok(user)
+                } else {
+                    Err(Error::InvalidUser)
+                }
+            } else {
+                Err(Error::ParseFailed)
+            }
+        } else {
+            Err(Error::TooShort)
+        }
+    } else {
+        Err(Error::EmptyInput)
+    }
+}
+```
+
+**After (Early Returns):**
+
+```rust
+fn process_user_input(input: &str) -> Result<User, Error> {
+    if input.is_empty() {
+        return Err(Error::EmptyInput);
+    }
+
+    let trimmed = input.trim();
+    if trimmed.len() < 3 {
+        return Err(Error::TooShort);
+    }
+
+    let user = User::parse(trimmed)?;
+
+    if !user.is_valid() {
+        return Err(Error::InvalidUser);
+    }
+
+    Ok(user)
+}
+```
+
+**Using let-else:**
+
+```rust
+fn process_user_input(input: &str) -> Result<User, Error> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(Error::EmptyInput);
+    }
+
+    let Ok(user) = User::parse(trimmed) else {
+        return Err(Error::ParseFailed);
+    };
+
+    user.is_valid().then_some(user).ok_or(Error::InvalidUser)
+}
+```
+
+- **Comments**: Describe what code does NOW, not historical context or implementation details
+
+### Performance Considerations
+
+Performance is paramount, especially in critical paths in protocol parsing or buffer management
+
+- Prefer low or zero-copy solutions where possible
+- Follow cache-friendly patterns
+- Consider vectorization for amenable problems
+- Avoid unnecessary allocations
+- Measure your changes before and after
+- If you're writing code which is an optimization... prove it!
+
+## Testing
+
+### Testing Philosophy
+
+We follow strict testing practices:
+
+- **Comprehensive Coverage**: Unit, integration, and end-to-end tests
+- **Don't Overuse Mocked Behavior**: Tests should exercise real logic where possible
+- **Clean Output**: Test output must be pristine to pass
+- **Test-Driven Development**: TDD can be a helpful approach - write tests first when practical
+

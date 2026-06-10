@@ -1,0 +1,111 @@
+[package]
+name = "endpoint-schema"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format", default-features = false }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+ep-core = { path = "../ep-core", default-features = false }
+aws-core = { path = "../aws-core", optional = true }
+azure-core = { path = "../azure-core", optional = true }
+cassandra-core = { path = "../cassandra-core", optional = true }
+clickhouse-core = { path = "../clickhouse-core", optional = true }
+databricks-core = { path = "../databricks-core", optional = true }
+datadog-core = { path = "../datadog-core", default-features = false, optional = true }
+eraser-core = { path = "../eraser-core", optional = true }
+function-core = { path = "../function-core", optional = true }
+gitlab-core = { path = "../gitlab-core", optional = true }
+gworkspace-core = { path = "../gworkspace-core", optional = true }
+http-core = { path = "../http-core", optional = true }
+llm-core = { path = "../llm-core", optional = true }
+mongo-core = { path = "../mongo-core", optional = true }
+mssql-core = { path = "../mssql-core", optional = true }
+mysql-core = { path = "../mysql-core", optional = true }
+oracle-core = { path = "../oracle-core", optional = true }
+pinecone-core = { path = "../pinecone-core", optional = true }
+posthog-core = { path = "../posthog-core", optional = true }
+postgres-core = { path = "../postgres-core", optional = true }
+redis-core = { path = "../redis-core", optional = true }
+salesforce-core = { path = "../salesforce-core", optional = true }
+s3-core = { path = "../s3-core", optional = true }
+snowflake-core = { path = "../snowflake-core", optional = true }
+tavily-core = { path = "../tavily-core", optional = true }
+weaviate-core = { path = "../weaviate-core", optional = true }
+postgres-types = { workspace = true }
+redis = { workspace = true }
+function_name = { workspace = true }
+utoipa = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+borsh = { workspace = true }
+tokio-postgres = { workspace = true }
+chrono = { workspace = true }
+bytes = { workspace = true }
+turso = { workspace = true, optional = true }
+
+[features]
+default = []
+all = [
+  "aws",
+  "azure",
+  "cassandra",
+  "clickhouse",
+  "databricks",
+  "datadog",
+  "elasticache",
+  "eraser",
+  "function",
+  "gitlab",
+  "gworkspace",
+  "http",
+  "llm",
+  "mongo",
+  "mssql",
+  "mysql",
+  "oracle",
+  "pinecone",
+  "postgres",
+  "posthog",
+  "rds",
+  "redis",
+  "s3",
+  "salesforce",
+  "snowflake",
+  "tavily",
+  "weaviate",
+]
+embedded-db = ["ep-core/embedded-db", "dep:turso"]
+azure = ["dep:azure-core"]
+cassandra = ["dep:cassandra-core"]
+clickhouse = ["dep:clickhouse-core"]
+databricks = ["dep:databricks-core"]
+datadog = ["dep:datadog-core"]
+elasticache = ["redis"]
+eraser = ["dep:eraser-core"]
+function = ["dep:function-core"]
+gitlab = ["dep:gitlab-core"]
+google_workspace = ["gworkspace"]
+gworkspace = ["dep:gworkspace-core"]
+http = ["dep:http-core"]
+llm = ["dep:llm-core"]
+mongo = ["dep:mongo-core"]
+mssql = ["dep:mssql-core"]
+mysql = ["dep:mysql-core"]
+oracle = ["dep:oracle-core"]
+pinecone = ["dep:pinecone-core"]
+posthog = ["dep:posthog-core"]
+postgres = ["dep:postgres-core"]
+rds = ["postgres"]
+redis = ["dep:redis-core"]
+s3 = ["dep:s3-core"]
+salesforce = ["dep:salesforce-core"]
+snowflake = ["dep:snowflake-core"]
+tavily = ["dep:tavily-core"]
+weaviate = ["dep:weaviate-core"]
+aws = ["dep:aws-core", "function", "s3", "rds", "elasticache"]
+
+[lints]
+workspace = true

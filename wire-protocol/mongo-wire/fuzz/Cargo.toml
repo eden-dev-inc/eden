@@ -1,0 +1,42 @@
+[package]
+name = "mongo-wire-fuzz"
+version = "0.1.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mongo-wire = { path = ".." }
+wire-stream = { path = "../../wire-stream" }
+arbitrary = { version = "1", features = ["derive"] }
+
+[[bin]]
+name = "fuzz_op_msg"
+path = "fuzz_targets/fuzz_op_msg.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_header"
+path = "fuzz_targets/fuzz_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_bson"
+path = "fuzz_targets/fuzz_bson.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_op_compressed"
+path = "fuzz_targets/fuzz_op_compressed.rs"
+test = false
+doc = false
+bench = false

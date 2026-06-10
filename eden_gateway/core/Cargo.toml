@@ -1,0 +1,20 @@
+[package]
+name = "eden-gateway-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eden-core = { path = "../../eden_core" }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+ep-core = { path = "../../endpoint-core/ep-core", default-features = false }
+
+bytes = { workspace = true }
+dashmap = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+
+[lints]
+workspace = true

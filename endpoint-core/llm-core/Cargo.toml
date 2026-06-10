@@ -1,0 +1,52 @@
+[package]
+name = "llm-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+ep-core = { path = "../ep-core", default-features = false }
+eden_config = { path = "../../eden_config" }
+
+aho-corasick = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+function_name = { workspace = true }
+utoipa = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+borsh = { workspace = true }
+deadpool = { workspace = true }
+futures = { workspace = true }
+opentelemetry = { workspace = true }
+once_cell = { workspace = true }
+llm = { workspace = true }
+rmcp = { workspace = true }
+reqwest = { workspace = true }
+regex = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+tiktoken-rs = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+bytes = { workspace = true }
+
+[lints]
+workspace = true
+
+[features]
+default = []
+embedded-db = ["ep-core/embedded-db"]
+
+[dev-dependencies]
+httpmock = { workspace = true }
+tokio = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "pii_dictionary"
+harness = false

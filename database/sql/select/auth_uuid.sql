@@ -1,0 +1,1 @@
+SELECT * FROM auths WHERE uuid = $1 LIMIT 1;

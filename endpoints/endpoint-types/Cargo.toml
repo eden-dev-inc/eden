@@ -1,0 +1,39 @@
+[package]
+name = "endpoint-types"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["runtime"]
+runtime = ["dep:database"]
+embedded-db = ["runtime", "database/embedded-db", "ep-core/embedded-db"]
+
+[dependencies]
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+ep-core = { path = "../../endpoint-core/ep-core", default-features = false }
+database = { path = "../../database", default-features = false, optional = true }
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+
+bitflags = { workspace = true }
+borsh = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+cfg-if = { workspace = true }
+dashmap = { workspace = true }
+function_name = { workspace = true }
+futures = { workspace = true }
+linkme = { workspace = true }
+opentelemetry = { workspace = true }
+redis = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+utoipa = { workspace = true }
+
+[lints]
+workspace = true

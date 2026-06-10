@@ -1,0 +1,20 @@
+[package]
+name = "cacophony"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "cacophony"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+clap = { workspace = true }
+rand = { workspace = true }
+rand_distr = "0.5"
+hdrhistogram = "7"
+async-channel = "2"
+socket2 = "0.5"

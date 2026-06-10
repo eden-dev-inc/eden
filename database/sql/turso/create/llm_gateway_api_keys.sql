@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS llm_gateway_api_keys (
+    id TEXT PRIMARY KEY,
+    organization_uuid TEXT NOT NULL REFERENCES organizations(uuid) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    key_hash TEXT NOT NULL UNIQUE,
+    key_prefix TEXT NOT NULL,
+    endpoint_uuid TEXT NOT NULL REFERENCES endpoints(uuid) ON DELETE CASCADE,
+    agent_uuid TEXT NOT NULL UNIQUE REFERENCES llm_agents(id) ON DELETE CASCADE,
+    model_allowlist TEXT,
+    rate_limit_rpm INTEGER,
+    budget_tokens_monthly INTEGER,
+    pii_policy TEXT NOT NULL,
+    price_arbitrage_mode TEXT NOT NULL,
+    response_cache_ttl_secs INTEGER,
+    route_optimization_mode TEXT NOT NULL,
+    kv_cache_mode TEXT NOT NULL,
+    kv_cache_ttl_secs INTEGER,
+    route_switch_threshold_percent INTEGER,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_used_at TEXT
+);

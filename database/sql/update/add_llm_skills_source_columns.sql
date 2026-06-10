@@ -1,0 +1,5 @@
+ALTER TABLE llm_skills ADD COLUMN IF NOT EXISTS source_provider TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE llm_skills ADD COLUMN IF NOT EXISTS source_repo_url TEXT;
+ALTER TABLE llm_skills ADD COLUMN IF NOT EXISTS source_path TEXT;
+ALTER TABLE llm_skills ADD COLUMN IF NOT EXISTS source_ref TEXT;
+ALTER TABLE llm_skills ADD COLUMN IF NOT EXISTS source_url TEXT;

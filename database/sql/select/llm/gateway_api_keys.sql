@@ -1,0 +1,25 @@
+SELECT
+    id,
+    organization_uuid,
+    name,
+    key_hash,
+    key_prefix,
+    endpoint_uuid,
+    agent_uuid,
+    model_allowlist,
+    rate_limit_rpm,
+    budget_tokens_monthly,
+    pii_policy,
+    custom_pii_terms,
+    price_arbitrage_mode,
+    response_cache_ttl_secs,
+    route_optimization_mode,
+    kv_cache_mode,
+    kv_cache_ttl_secs,
+    route_switch_threshold_percent,
+    enabled,
+    created_at,
+    updated_at,
+    last_used_at
+FROM llm_gateway_api_keys
+ORDER BY created_at DESC;

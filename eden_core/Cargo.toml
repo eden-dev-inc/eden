@@ -1,0 +1,27 @@
+[package]
+name = "eden-core"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+
+[dependencies]
+auth = { path = "auth" }
+block = { path = "block" }
+db = { path = "db" }
+proto = { path = "proto" }
+comm = { path = "comm" }
+error = { path = "error", default-features = false }
+format = { path = "format" }
+json = { path = "json" }
+node = { path = "node", features = ["ed25519"] }
+request = { path = "request" }
+response = { path = "response" }
+telemetry = { path = "telemetry" }
+fast-telemetry = "0.5.1"
+macros = { path = "macros" }
+telemetry-macro = { path = "telemetry-macro" }
+
+[lints]
+workspace = true

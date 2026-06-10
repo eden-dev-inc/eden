@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS execution_runs (
+    id UUID PRIMARY KEY,
+    organization_uuid UUID NOT NULL,
+    principal_type TEXT NOT NULL,
+    principal_id UUID NOT NULL,
+    endpoint_uuid UUID NOT NULL,
+    trigger_kind TEXT NOT NULL,
+    trigger_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    conversation_id UUID,
+    agent_id UUID,
+    request_payload JSONB NOT NULL,
+    state TEXT NOT NULL,
+    plan JSONB,
+    checkpoint JSONB,
+    response_text TEXT,
+    error TEXT,
+    duration_ms BIGINT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);

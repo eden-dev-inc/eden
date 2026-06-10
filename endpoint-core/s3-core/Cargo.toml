@@ -1,0 +1,32 @@
+[package]
+name = "s3-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+ep-core = { path = "../ep-core", default-features = false }
+function_name = { workspace = true }
+utoipa = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+borsh = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+base64 = { workspace = true }
+deadpool = { workspace = true }
+aws-config = { workspace = true }
+aws-credential-types = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+
+[dev-dependencies]
+testcontainers-modules = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+infra-tests = []
+
+[lints]
+workspace = true

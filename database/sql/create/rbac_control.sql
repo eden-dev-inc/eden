@@ -1,0 +1,19 @@
+CREATE TABLE IF NOT EXISTS rbac_control (
+    org_uuid UUID NOT NULL REFERENCES organizations(uuid),
+    entity_kind rbac_entity_kind NOT NULL,
+    entity_uuid UUID NOT NULL,
+    subject_kind rbac_subject_kind NOT NULL,
+    subject_uuid UUID NOT NULL,
+    perms VARCHAR(8) NOT NULL DEFAULT '',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    version_ms BIGINT NOT NULL,
+    version_seq BIGINT NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (org_uuid, entity_kind, entity_uuid, subject_kind, subject_uuid)
+);
+CREATE INDEX IF NOT EXISTS idx_rbac_control_subject
+    ON rbac_control (org_uuid, subject_kind, subject_uuid)
+    WHERE is_active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_rbac_control_entity
+    ON rbac_control (org_uuid, entity_kind, entity_uuid)
+    WHERE is_active = TRUE;

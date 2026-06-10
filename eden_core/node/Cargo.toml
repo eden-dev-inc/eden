@@ -1,0 +1,26 @@
+[package]
+name = "node"
+version = "0.1.0"
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+db = { path = "../db" }
+error = { path = "../error", default-features = false }
+format = { path = "../format" }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+function_name = { workspace = true }
+
+borsh = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+ed25519 = []
+
+[lints]
+workspace = true

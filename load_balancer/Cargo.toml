@@ -1,0 +1,24 @@
+[package]
+name = "load-balancer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eden-core = { path = "../eden_core" }
+
+async-trait = { workspace = true }
+log = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry-stdout = { workspace = true }
+pingora-core = { workspace = true }
+pingora-error = { workspace = true }
+pingora-http = { workspace = true }
+pingora-load-balancing = { workspace = true }
+pingora-proxy = { workspace = true }
+rustls = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

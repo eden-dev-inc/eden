@@ -1,0 +1,23 @@
+[package]
+name = "ai-workload"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "ai_workload"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ai-workload"
+path = "src/main.rs"
+
+[dependencies]
+bytes = { workspace = true }
+clap = { workspace = true }
+hdrhistogram = "7"
+rand = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+toml = { workspace = true }

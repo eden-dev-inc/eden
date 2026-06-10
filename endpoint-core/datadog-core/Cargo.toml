@@ -1,0 +1,28 @@
+[package]
+name = "datadog-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+ep-core = { path = "../ep-core", default-features = false }
+function_name = { workspace = true }
+utoipa = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+borsh = { workspace = true }
+
+deadpool = { workspace = true }
+futures = { workspace = true }
+
+datadog-api-client = { version = "=0.30.0", default-features = false, features = ["rustls-tls"], optional = true }
+
+reqwest = { workspace = true }
+opentelemetry = { workspace = true }
+bytes = { workspace = true }
+
+[features]
+default = []
+sdk = ["dep:datadog-api-client"]

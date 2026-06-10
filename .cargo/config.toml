@@ -1,0 +1,13 @@
+# Speed up linking — mold is significantly faster than the default linker.
+# Install: brew install mold (macOS) or apt install mold (Linux)
+[target.aarch64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# mold does not support macOS; this section is Linux-only.
+# [target.aarch64-apple-darwin]
+# rustflags = ["-C", "link-args=-fuse-ld=/opt/homebrew/bin/ld.mold"]

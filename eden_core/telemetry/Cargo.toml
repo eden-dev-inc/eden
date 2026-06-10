@@ -1,0 +1,52 @@
+[package]
+name = "telemetry"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+otlp = ["fast-telemetry/otlp"]
+eviction = ["fast-telemetry/eviction"]
+clickhouse = ["fast-telemetry/clickhouse"]
+disable-spans = []
+
+[dependencies]
+format = { path = "../format" }
+auth = { path = "../auth" }
+request = { path = "../request" }
+eden_config = { path = "../../eden_config" }
+function_name = { workspace = true }
+metrics_derive_macro = { path = "../metrics_derive_macro" }
+fast-telemetry = { version = "0.5.1", features = ["macros", "eviction", "otlp", "clickhouse"] }
+dashmap = { workspace = true }
+
+actix-web = { workspace = true }
+log = { workspace = true }
+opentelemetry = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tonic = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+utoipa = { workspace = true }
+uuid = { workspace = true }
+borsh = { workspace = true }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+memchr = { workspace = true }
+flate2 = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+opentelemetry-stdout = "0.30.0"
+opentelemetry_sdk = { workspace = true }
+rand = { workspace = true }
+rayon = { workspace = true }
+
+[[bench]]
+name = "otel_benchmark"
+harness = false
+
+[lints]
+workspace = true

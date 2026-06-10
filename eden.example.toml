@@ -1,0 +1,438 @@
+# Eden MDBS Configuration File
+#
+# Copy to eden.toml and customize as needed.
+# Environment variables override these values (see eden_config/README.md).
+#
+# Priority order (lowest to highest):
+#   1. Compiled defaults (shown here)
+#   2. This TOML file
+#   3. Legacy flat env vars (e.g. EDEN_PORT)
+#   4. Nested env vars (EDEN__SERVICES__EDEN__PORT)
+#   5. CLI arguments (--port, --log-level, --otlp-collector)
+
+# ---------------------------------------------------------------------------
+# Feature Flags
+# ---------------------------------------------------------------------------
+[features]
+# Master switch for analytics data collection.
+# Env: EDEN_ANALYTICS_ENABLED
+analytics_enabled = true
+
+# Security policy enforcement mode: "observe" | "warn" | "block"
+# Env: EDEN_POLICY_ENFORCEMENT_MODE
+policy_enforcement_mode = "observe"
+
+# Enable Redis PSYNC functionality at proxy layer.
+# Env: REDIS_PSYNC
+redis_psync = false
+
+# ---------------------------------------------------------------------------
+# System Limits
+# ---------------------------------------------------------------------------
+[limits]
+# Rate limit interval in milliseconds (0 = disabled).
+# Env: EDEN_RATE_LIMIT
+rate_limit_ms = 100
+
+# JWT token expiry in seconds.
+# Env: EDEN_JWT_EXPIRY_S
+jwt_expiry_secs = 900
+
+# Redis cache TTL in seconds.
+# Env: REDIS_CACHE_TTL
+redis_cache_ttl_secs = 3600
+
+# ClickHouse connection pool size (must be > 0).
+# Env: CLICKHOUSE_POOL_SIZE
+clickhouse_pool_size = 8
+
+# Maximum Redis pool connections cap.
+# Env: EDEN_REDIS_POOL_MAX_CONNECTIONS_CAP
+redis_pool_max_connections_cap = 64
+
+# Tools service timeout in seconds.
+# Env: TOOLS_SERVICE_TIMEOUT_SECS
+tools_service_timeout_secs = 10
+
+# Maximum number of keys in a Redis bulk operation batch.
+# Env: REDIS_BATCH_COUNT
+redis_batch_count = 20000
+
+# Maximum number of bytes in a Redis bulk operation batch.
+# Env: REDIS_BATCH_SIZE
+redis_batch_size_bytes = 1000000000
+
+# ---------------------------------------------------------------------------
+# Telemetry & Observability
+# ---------------------------------------------------------------------------
+[telemetry]
+# OTLP collector endpoint for Eden service.
+# Env: EDEN_OTLP_COLLECTOR
+otlp_collector = "http://localhost:4317"
+
+# OTLP collector endpoint for database telemetry (empty = disabled).
+# Env: EDEN_OTLP_DB_COLLECTOR
+otlp_db_collector = ""
+
+# OTLP collector endpoint for Engine service.
+# Env: ENGINE_OTLP_COLLECTOR
+engine_otlp_collector = "http://localhost:4317"
+
+# Log level: trace, debug, info, warn, error.
+# Env: EDEN_LOG_LEVEL
+log_level = "info"
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+[services.eden]
+# Env: EDEN_HOST
+host = "localhost"
+# Env: EDEN_PORT
+port = 8000
+# Base64-encoded JWT secret (sensitive).
+# Env: EDEN_JWT_SECRET
+# jwt_secret = "your-base64-jwt-secret"
+# Node UUID for cluster identification.
+# Env: EDEN_NODE_UUID
+# node_uuid = "your-node-uuid"
+# Token for creating new organizations.
+# Env: EDEN_NEW_ORG_TOKEN
+# new_org_token = "your-new-org-token"
+
+[services.engine]
+# Env: ENGINE_HOST
+host = "localhost"
+# Env: ENGINE_PORT
+port = 8001
+
+[services.llm]
+# All LLM fields are optional. Uncomment to enable.
+# Env: EDEN_INTERNAL_LLM_PROVIDER
+# provider = "openai"
+# Env: EDEN_INTERNAL_LLM_MODEL
+# model = "gpt-4"
+# Env: EDEN_INTERNAL_LLM_API_KEY
+# api_key = "your-api-key"
+# Env: EDEN_INTERNAL_LLM_BASE_URL
+# base_url = "https://api.openai.com/v1"
+# Env: EDEN_INTERNAL_LLM_SYSTEM_PROMPT
+# system_prompt = "You are a helpful assistant."
+# Env: EDEN_INTERNAL_LLM_TEMPERATURE
+# temperature = 0.7
+# Env: EDEN_INTERNAL_LLM_MAX_TOKENS
+# max_tokens = 4096
+
+# ---------------------------------------------------------------------------
+# Agents & Skills
+# ---------------------------------------------------------------------------
+[agents]
+# skill_prompt_budget_percent = 5
+# skill_prompt_budget_tokens = null  # override for explicit token budget
+# default_context_window_tokens = 8192
+# default_skill_capacity = 5
+# max_tool_passes = 25
+# max_conversation_messages = 200
+# session_ttl_secs = 1800
+# memory_retention_days = 90
+
+[agents.security]
+# tool_endpoint_allowed_hosts = []
+# tool_endpoint_allow_private_ips = false
+# tool_endpoint_require_https = true
+
+# ---------------------------------------------------------------------------
+# RBAC PG Sync
+# ---------------------------------------------------------------------------
+[rbac_pg_sync]
+# Number of RBAC events to consume per stream read.
+# Env: EDEN__RBAC_PG_SYNC__BATCH_SIZE
+batch_size = 128
+# Stream read block timeout in milliseconds.
+# Env: EDEN__RBAC_PG_SYNC__BLOCK_MS
+block_ms = 5000
+# Delay before retrying failed RBAC PG sync loop in milliseconds.
+# Env: EDEN__RBAC_PG_SYNC__RETRY_DELAY_MS
+retry_delay_ms = 1000
+# Consumer name prefix; node UUID is appended at runtime.
+# Env: EDEN__RBAC_PG_SYNC__CONSUMER_PREFIX
+consumer_prefix = "eden"
+
+# ---------------------------------------------------------------------------
+# Databases
+# ---------------------------------------------------------------------------
+[databases.redis]
+# Env: REDIS_HOST
+host = "localhost"
+# Env: REDIS_PORT
+port = 6379
+# Env: REDIS_USER
+username = ""
+# Env: REDIS_PASSWORD (sensitive)
+password = ""
+# Env: REDIS_DB_NUMBER
+db_number = 0
+
+[databases.postgres]
+# Env: POSTGRES_HOST
+host = "localhost"
+# Env: POSTGRES_PORT
+port = 5432
+# Env: POSTGRES_USER
+username = "postgres"
+# Env: POSTGRES_PASSWORD (sensitive)
+password = ""
+# Env: POSTGRES_DB_NAME
+database = "postgres"
+
+[databases.clickhouse]
+# Env: CLICKHOUSE_URL
+url = "http://localhost:8123"
+# Env: CLICKHOUSE_USER
+username = ""
+# Env: CLICKHOUSE_PASSWORD (sensitive)
+password = ""
+# Env: CLICKHOUSE_DATABASE / CLICKHOUSE_DB
+# database = "default"
+
+# ---------------------------------------------------------------------------
+# Snapshot
+# ---------------------------------------------------------------------------
+[snapshot]
+# Path to snapshot file.
+# Env: EDEN_SNAPSHOT_PATH
+# path = "/var/eden/snapshot.rdb"
+# Password for snapshot encryption (sensitive).
+# Env: EDEN_SNAPSHOT_PASSWORD
+# password = "your-snapshot-password"
+# Directory for snapshot storage.
+# Env: EDEN_SNAPSHOT_DIR
+# dir = "snapshots"
+
+# ---------------------------------------------------------------------------
+# Organization Transfer
+# ---------------------------------------------------------------------------
+[org_transfer]
+# Directory for organization transfer artifact storage.
+# Env: EDEN_ORG_TRANSFER_DIR
+# dir = "transfers"
+
+# ---------------------------------------------------------------------------
+# External Metering Compatibility
+# ---------------------------------------------------------------------------
+[licensing]
+# Optional signed entitlement token for external metering integrations.
+# Env: EDEN_LICENSE_KEY
+# license_key = "your-external-metering-token"
+# Optional cluster unique identifier.
+# Env: EDEN_CLUSTER_UID
+# cluster_uid = "your-cluster-uid"
+# Optional external metering base URL. Empty by default.
+# Env: EDEN_PHONE_HOME_URL
+phone_home_url = ""
+# External sync interval in seconds (24 hours).
+# Env: EDEN_HEARTBEAT_INTERVAL_SECS
+heartbeat_interval_secs = 86400
+# Disable external compatibility exports entirely.
+# Env: EDEN_PHONE_HOME_DISABLED
+disabled = true
+# Enable V1 metering exporter (`POST /v1/metering/events`).
+# Env: EDEN_METERING_ENABLED
+metering_enabled = false
+# Optional full endpoint override. If unset, derived from `phone_home_url` when set.
+# Env: EDEN_METERING_ENDPOINT_URL
+# metering_endpoint_url = "https://metering.example.com/v1/metering/events"
+# Dedicated metering ingest bearer token.
+# Env: EDEN_METERING_INGEST_API_KEY
+# Required when metering_enabled=true; if unset, metering exporter stays disabled.
+# metering_ingest_api_key = "metering-ingest-token"
+# Flush interval (seconds) for metering event windows.
+# Env: EDEN_METERING_FLUSH_INTERVAL_SECS
+metering_flush_interval_secs = 60
+# Maximum events per metering POST batch.
+# Env: EDEN_METERING_MAX_BATCH_SIZE
+metering_max_batch_size = 100
+# Retry settings for transient metering export failures.
+# Env: EDEN_METERING_RETRY_MAX_ATTEMPTS
+metering_retry_max_attempts = 5
+# Env: EDEN_METERING_RETRY_BASE_DELAY_MS
+metering_retry_base_delay_ms = 500
+# Env: EDEN_METERING_RETRY_MAX_DELAY_MS
+metering_retry_max_delay_ms = 30000
+
+# ---------------------------------------------------------------------------
+# Analytics — Sampling
+# ---------------------------------------------------------------------------
+
+# Burst capture: anomaly-triggered windows that capture detailed request data.
+[analytics.sampling.burst]
+enabled = true
+# Duration of each burst window in seconds.
+window_duration_secs = 30
+# Cooldown between burst windows per endpoint in seconds.
+cooldown_secs = 300
+# Maximum requests captured per window.
+max_requests_per_window = 1000
+# Maximum concurrent burst windows across all endpoints.
+max_concurrent_windows = 10
+# Track per-connection sequences during burst.
+track_sequences = true
+
+# Always-on analysis: lightweight checks that run on every request.
+[analytics.sampling.always_on]
+# Enable PII detection for keys.
+pii_detection = false
+# Enable dangerous command detection.
+dangerous_commands = true
+# Slow query threshold in microseconds.
+slow_query_threshold_us = 10000
+# Enable error tracking.
+error_tracking = true
+
+# Force sampling: always capture requests matching these criteria.
+[analytics.sampling.force_sample]
+on_error = true
+on_slow_query = true
+on_dangerous_command = true
+on_write_command = false
+
+# Discovery: timer-triggered windows for template reverse-engineering.
+[analytics.sampling.discovery]
+enabled = true
+# Duration of each discovery window in seconds.
+window_duration_secs = 10
+# Interval between discovery windows per endpoint in seconds.
+interval_secs = 300
+# Cooldown after a discovery window completes, per endpoint, in seconds.
+cooldown_secs = 300
+# Maximum requests captured per discovery window.
+max_requests_per_window = 500
+# Maximum concurrent discovery windows.
+max_concurrent_windows = 5
+
+# JS divergence anomaly detection: triggers burst capture on distribution shifts.
+[analytics.sampling.divergence]
+enabled = true
+# Aggregation window in seconds.
+window_secs = 10
+# EWMA smoothing factor (0.0–1.0).
+ewma_alpha = 0.01
+# Dirichlet prior strength.
+dirichlet_beta = 50.0
+# JS divergence threshold for watch state.
+warn_threshold = 0.02
+# JS divergence threshold for confirmed anomaly.
+critical_threshold = 0.05
+# Consecutive windows above threshold to confirm.
+confirm_windows = 3
+# Burst multiplier during watch state.
+watch_multiplier = 2.0
+# Burst multiplier during confirmed anomaly.
+confirmed_multiplier = 5.0
+
+# ---------------------------------------------------------------------------
+# Analytics — Audit & Stream
+# ---------------------------------------------------------------------------
+[analytics.audit]
+# Redis commands to audit (validated at consumption site).
+commands = []
+# Services to audit.
+services = []
+# Flush interval in seconds.
+flush_interval_secs = 10
+
+[analytics.stream]
+# Enable real-time analytics stream.
+enabled = false
+# Stream snapshot interval in seconds.
+interval_secs = 15
+
+# ---------------------------------------------------------------------------
+# Analytics — Ingestion
+# ---------------------------------------------------------------------------
+[analytics.ingestion]
+# Rollup flush interval in seconds (snapshotted at loop start).
+rollup_flush_interval_secs = 60
+# Per-batch timeout during shutdown flush (snapshotted at loop start).
+shutdown_flush_timeout_secs = 5
+# Total time cap for shutdown flush (snapshotted at loop start).
+shutdown_total_timeout_secs = 30
+# Max blocked commands tracked per endpoint (hot-reloadable).
+blocked_command_max_per_endpoint = 10000
+
+# ---------------------------------------------------------------------------
+# Analytics — Metadata Collection
+# ---------------------------------------------------------------------------
+[analytics.metadata]
+# High-priority collection interval (seconds).
+high_interval_secs = 60
+# Medium-priority collection interval (seconds).
+medium_interval_secs = 1800
+# Low-priority collection interval (seconds).
+low_interval_secs = 86400
+# Per-job timeout (seconds).
+job_timeout_secs = 300
+# Backoff base delay on failure (seconds).
+backoff_base_secs = 30
+# Backoff multiplier per consecutive failure.
+backoff_factor = 2
+# Maximum backoff delay (seconds).
+backoff_max_secs = 900
+# Redis key prefix for metadata storage.
+redis_prefix = "metadata:"
+# Default query timeout for metadata collectors (seconds).
+collector_query_timeout_secs = 5
+
+# ---------------------------------------------------------------------------
+# Analytics — Redis-specific
+# ---------------------------------------------------------------------------
+
+# Aggregate anti-pattern detection thresholds.
+[analytics.redis.anti_patterns]
+# Response size threshold in bytes.
+large_response_bytes = 65536
+# Average target count threshold for MGET/MSET.
+high_fanout_threshold = 100
+# Error rate threshold (0.0–1.0).
+high_error_rate = 0.10
+# Ratio of sampled writes without TTL to flag (0.0–1.0).
+no_ttl_ratio = 0.80
+
+# Recommendation engine thresholds.
+[analytics.redis.recommendations]
+min_observation_windows = 30
+min_total_requests = 500
+write_heavy_ratio = 0.95
+write_heavy_min_reads_per_day = 10
+no_ttl_coverage_threshold = 0.1
+no_ttl_min_writes = 1000
+stale_days = 7
+oversized_value_bytes = 10240
+oversized_min_requests = 500
+hot_key_pct_threshold = 0.15
+high_error_rate = 0.05
+expensive_read_max_write_ratio = 0.2
+expensive_read_latency_us = 10000
+missing_pipeline_min_reads_per_window = 50
+large_hash_fetch_min_value_bytes = 5120
+dangerous_command_min_occurrences = 5
+pii_min_detections = 10
+read_replica_min_requests = 100000
+read_replica_read_ratio_threshold = 0.70
+high_fanout_min_occurrences = 10
+ram_price_per_gb_monthly = 5.0
+error_note_min_rate = 0.01
+max_recommendations_per_rule = 10
+
+# Postgres analytics
+
+# Anti-pattern detection thresholds.
+[analytics.postgres.anti_patterns]
+# N+1 detection threshold (min repeated queries to flag).
+nplus_threshold = 5
+# Excessive subquery count threshold.
+excessive_subquery_threshold = 3
+# Whether to detect SELECT * patterns.
+detect_select_star = true
+# Maximum join count before flagging as excessive.
+excessive_joins_threshold = 4
