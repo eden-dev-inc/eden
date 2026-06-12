@@ -1,0 +1,21 @@
+[package]
+name = "error"
+version = "0.1.0"
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["actix"]
+actix = ["dep:actix-web"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+function_name = { workspace = true }
+actix-web = { workspace = true, optional = true }
+borsh = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,43 @@
+[package]
+name = "endpoint-openapi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+endpoint = { path = "../core", default-features = false }
+serde_json = { workspace = true }
+utoipa = { workspace = true }
+
+[features]
+default = []
+all = ["endpoint/all"]
+aws = ["endpoint/aws"]
+azure = ["endpoint/azure"]
+cassandra = ["endpoint/cassandra"]
+clickhouse = ["endpoint/clickhouse"]
+databricks = ["endpoint/databricks"]
+datadog = ["endpoint/datadog"]
+elasticache = ["endpoint/elasticache"]
+eraser = ["endpoint/eraser"]
+function = ["endpoint/function"]
+gitlab = ["endpoint/gitlab"]
+gworkspace = ["endpoint/gworkspace"]
+http = ["endpoint/http"]
+llm = ["endpoint/llm"]
+mongo = ["endpoint/mongo"]
+mssql = ["endpoint/mssql"]
+mysql = ["endpoint/mysql"]
+oracle = ["endpoint/oracle"]
+pinecone = ["endpoint/pinecone"]
+postgres = ["endpoint/postgres"]
+posthog = ["endpoint/posthog"]
+rds = ["endpoint/rds"]
+redis = ["endpoint/redis"]
+s3 = ["endpoint/s3"]
+salesforce = ["endpoint/salesforce"]
+snowflake = ["endpoint/snowflake"]
+tavily = ["endpoint/tavily"]
+weaviate = ["endpoint/weaviate"]
+
+[lints]
+workspace = true

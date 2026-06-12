@@ -1,0 +1,74 @@
+[package]
+name = "resp-wire-fuzz"
+# Version is 0.0.0 by convention for fuzz crates - this is internal tooling
+# that will never be published, so the version number is meaningless.
+version = "0.1.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Prevent this from being included in the parent workspace
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+resp-wire = { path = ".." }
+wire-stream = { path = "../../wire-stream" }
+arbitrary = { version = "1", features = ["derive"] }
+
+# Primary fuzz target - tests all RESP2/RESP3 types via Dynamic parser.
+# Covers: simple strings, errors, integers, bulk strings, arrays, nulls,
+# booleans, doubles, bignums, verbatim strings, maps, attributes, sets, pushes.
+[[bin]]
+name = "fuzz_dynamic"
+path = "fuzz_targets/fuzz_dynamic.rs"
+test = false
+doc = false
+bench = false
+
+# Tests the Pipeline parser for sequences of RESP messages.
+# Covers: message boundary detection, multi-command parsing, slice extraction.
+[[bin]]
+name = "fuzz_pipeline"
+path = "fuzz_targets/fuzz_pipeline.rs"
+test = false
+doc = false
+bench = false
+
+# Focused testing of RESP integer parsing.
+# Covers: overflow/underflow, sign handling, i128 boundaries, invalid formats.
+[[bin]]
+name = "fuzz_integer"
+path = "fuzz_targets/fuzz_integer.rs"
+test = false
+doc = false
+bench = false
+
+# Focused testing of RESP double parsing.
+# Covers: UTF-8 edge cases, special values (inf/nan), overflow, precision.
+[[bin]]
+name = "fuzz_double"
+path = "fuzz_targets/fuzz_double.rs"
+test = false
+doc = false
+bench = false
+
+# Focused testing of RESP bulk string parsing.
+# Covers: length field handling, null strings, binary data, incomplete input.
+[[bin]]
+name = "fuzz_bulk_string"
+path = "fuzz_targets/fuzz_bulk_string.rs"
+test = false
+doc = false
+bench = false
+
+# Focused testing of RESP array parsing.
+# Covers: nested structures, null arrays, length handling, recursive parsing.
+[[bin]]
+name = "fuzz_array"
+path = "fuzz_targets/fuzz_array.rs"
+test = false
+doc = false
+bench = false

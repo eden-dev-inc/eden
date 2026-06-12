@@ -1,0 +1,14 @@
+[package]
+name = "proto"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# message = { path = "message" }
+# tonic = {verison = "0.11", features = ["gzip", "tls", "tls-roots", "transport"] }
+# tonic = { version = "0.11.0", features = ["tls"] }
+tonic = { workspace = true }
+prost = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,27 @@
+pub mod create_or_update_consumer_group;
+pub mod create_or_update_iot_hub;
+pub mod delete_consumer_group;
+pub mod delete_iot_hub;
+pub mod get_consumer_group;
+pub mod get_endpoint_health;
+pub mod get_iot_hub;
+pub mod get_quota_metrics;
+pub mod get_stats;
+pub mod list_consumer_groups;
+pub mod list_event_hub_consumer_groups;
+pub mod list_iot_hubs;
+pub mod list_keys;
+
+pub use create_or_update_consumer_group::*;
+pub use create_or_update_iot_hub::*;
+pub use delete_consumer_group::*;
+pub use delete_iot_hub::*;
+pub use get_consumer_group::*;
+pub use get_endpoint_health::*;
+pub use get_iot_hub::*;
+pub use get_quota_metrics::*;
+pub use get_stats::*;
+pub use list_consumer_groups::*;
+pub use list_event_hub_consumer_groups::*;
+pub use list_iot_hubs::*;
+pub use list_keys::*;

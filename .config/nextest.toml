@@ -1,0 +1,117 @@
+[profile.default]
+# Retry flaky container-based tests once before marking as failed.
+retries = 0
+
+# Broader-validation override: normal MR database CI does not select infra-tests.
+# When a broader database infra run is selected, shared containers need a
+# generous startup timeout and one retry for transient Docker flake.
+[[profile.default.overrides]]
+filter = 'package(database) and test(infra)'
+slow-timeout = { period = "120s", terminate-after = 3 }
+retries = 1
+
+# Normal selected-service override: rate-limiting integration tests live under
+# api_admin_auth. They each spin up dedicated Postgres/Redis/ClickHouse
+# containers and exercise PATCH /organizations under the rate-limit middleware.
+# Running them in parallel saturates Docker (slow container start -> server
+# probe timeout) and the per-process Postgres pool (RBAC query "connection
+# closed"). Reserve all worker threads so they run one-at-a-time.
+[[profile.default.overrides]]
+filter = 'package(eden-service) and test(rate_limiting)'
+slow-timeout = { period = "180s", terminate-after = 2 }
+threads-required = "num-cpus"
+
+# Broader-validation override: backup and org_transfer tests spin up dedicated
+# containers. Serialize them when those suites are selected so they do not
+# compete with shared-container tests for Docker resources.
+[[profile.default.overrides]]
+filter = 'package(database) and (test(backups::) | test(org_transfer::))'
+slow-timeout = { period = "300s", terminate-after = 2 }
+retries = 1
+threads-required = "num-cpus"
+
+[profile.ci]
+slow-timeout = { period = "60s", terminate-after = 2 }
+retries = 0
+
+[profile.ci.junit]
+path = "junit.xml"
+
+# Broader-validation override: these redis migration crate tests are not part
+# of the normal MR-selected eden-service integration target list.
+[[profile.ci.overrides]]
+filter = 'test(redis_to_redis_migration) | test(redis_migration_input_output)'
+slow-timeout = { period = "300s", terminate-after = 2 }
+
+# Broader-validation override: normal MR ep-runtime CI selects only the fast
+# config/component filter. These endpoint/container tests need serialization
+# when an all-feature ep-runtime run selects them.
+[[profile.ci.overrides]]
+filter = 'package(ep-runtime) and (test(with_database_manager_stores_and_returns_manager) | test(servers::engine::method::endpoint::connect::test_connection::https_endpoint_health_check) | test(servers::engine::method::endpoint::connect::test_connection::clickhouse_connection) | test(servers::engine::method::endpoint::connect::test_connection::llm_health_check))'
+slow-timeout = { period = "300s", terminate-after = 2 }
+# These tests each start database containers and compete for startup/resources in CI.
+# Reserve all worker threads so they run one-at-a-time and avoid infra flake from contention.
+threads-required = "num-cpus"
+
+# Normal MR-selected service override: this access test starts Redis, Postgres,
+# and ClickHouse containers and can exceed the generic CI timeout under shared
+# Docker load. Serialize it and allow a longer budget.
+[[profile.ci.overrides]]
+filter = 'package(eden-service) and test(comm::llm::access::tests::managed_tools_require_both_control_and_data_plane_read)'
+slow-timeout = { period = "300s", terminate-after = 2 }
+threads-required = "num-cpus"
+
+# Normal MR-selected service override: Redis ELS integration tests spin up
+# database containers and are routinely slower than the default CI timeout under
+# shared Docker contention.
+[[profile.ci.overrides]]
+filter = 'package(eden-service) and test(comm::endpoints::redis_els_integration_tests::)'
+slow-timeout = { period = "300s", terminate-after = 2 }
+threads-required = "num-cpus"
+
+# Broader-validation override: normal MR database CI does not select infra-tests.
+# When a broader database infra run is selected, shared containers need a
+# generous startup timeout for the first test that triggers startup.
+[[profile.ci.overrides]]
+filter = 'package(database) and test(infra)'
+slow-timeout = { period = "120s", terminate-after = 3 }
+retries = 1
+
+# Broader-validation override: backup and org_transfer tests use dedicated
+# containers (pg_dump/pg_restore needs whole-database access). Serialize them
+# when selected to avoid Docker contention.
+[[profile.ci.overrides]]
+filter = 'package(database) and (test(backups::) | test(org_transfer::))'
+slow-timeout = { period = "300s", terminate-after = 2 }
+retries = 1
+threads-required = "num-cpus"
+
+[[profile.ci.overrides]]
+filter = 'package(eden-service) and test(wrapped_openai_chat_sanitizes_clickhouse_without_mutating_postgres_schema)'
+slow-timeout = { period = "300s", terminate-after = 2 }
+threads-required = "num-cpus"
+
+# Normal MR-selected service override: this unit test provisions DB containers
+# through create_database_manager().
+[[profile.ci.overrides]]
+filter = 'package(eden-service) and test(managed_tools_require_both_control_and_data_plane_read)'
+slow-timeout = { period = "300s", terminate-after = 2 }
+threads-required = "num-cpus"
+
+# Normal MR-selected service override: api_admin_auth is in
+# EDEN_SERVICE_SELECTED_INTEGRATION_TEST_TARGETS. Its tests each boot Redis,
+# Postgres, and ClickHouse containers via the HTTP test harness, so run the
+# binary serially to avoid ClickHouse startup starvation under CI Docker load.
+[[profile.ci.overrides]]
+filter = 'package(eden-service) and binary(api_admin_auth)'
+slow-timeout = { period = "300s", terminate-after = 2 }
+threads-required = "num-cpus"
+
+# Normal MR-selected service override: these tests live in the selected
+# eden-service integration targets. They provision Redis/Postgres/ClickHouse
+# containers and can starve each other during startup under CI Docker load.
+# Serialize them when selected.
+[[profile.ci.overrides]]
+filter = 'package(eden-service) and (test(test_create_org) | test(test_pg_transaction) | test(test_create_user) | test(test_user_crud) | test(test_user_crud_edge_cases_authorization) | test(test_user_crud_edge_cases_duplicates_and_invalid_input) | test(test_interlay_crud_roundtrip) | test(test_interlay_connection_limit) | test(test_interlay_postgres_crud_roundtrip) | test(test_interlay_port_validation) | test(test_interlay_postgres_connection) | test(test_interlay_port_collision) | test(test_interlay_patch) | test(test_interlay_patch_state_cleanup) | test(test_interlay_patch_same_port_rebind) | test(test_interlay_patch_rollback_on_init_failure) | test(test_concurrent_patch_serialization) | test(test_patch_tls_tristate) | test(test_duplicate_port_rejected))'
+slow-timeout = { period = "300s", terminate-after = 2 }
+threads-required = "num-cpus"

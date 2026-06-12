@@ -1,0 +1,23 @@
+[package]
+name = "snowflake-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+ep-core = { path = "../ep-core", default-features = false }
+
+base64 = { workspace = true }
+borsh = { workspace = true }
+deadpool = { workspace = true }
+function_name = { workspace = true }
+opentelemetry = { workspace = true }
+pkcs8 = { workspace = true }
+reqwest = { workspace = true }
+rsa = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+utoipa = { workspace = true }

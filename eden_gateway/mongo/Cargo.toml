@@ -1,0 +1,31 @@
+[package]
+name = "gateway-mongo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eden-gateway-core = { path = "../core" }
+ep-runtime = { path = "../../ep-runtime", default-features = false, features = ["mongo"] }
+eden-core = { path = "../../eden_core" }
+eden_config = { path = "../../eden_config" }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+ep-core = { path = "../../endpoint-core/ep-core", default-features = false }
+mongo-core = { path = "../../endpoint-core/mongo-core" }
+endpoints = { path = "../../endpoints", default-features = false, features = ["mongo"] }
+
+mongo-wire = { path = "../../wire-protocol/mongo-wire" }
+
+chrono = { workspace = true }
+mongodb = { workspace = true }
+bytes = { workspace = true }
+dashmap = { workspace = true }
+once_cell = { workspace = true }
+opentelemetry = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

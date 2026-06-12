@@ -1,0 +1,2 @@
+ALTER TABLE llm_skills ADD COLUMN IF NOT EXISTS skill_tier TEXT NOT NULL DEFAULT 'core';
+ALTER TABLE llm_skills ADD COLUMN IF NOT EXISTS endpoint_kind TEXT;

@@ -1,0 +1,80 @@
+use crate::api::lib::AwsApi;
+use crate::api::lib::params::{build_query_body, indexed_list_params};
+use crate::api::wrapper::output::AwsJsonOutput;
+use crate::request::AwsRequest;
+use crate::{ApiInfo, ReqType, RunOutput, ToOutput};
+use aws_core::{AwsAsync, AwsTx};
+use ep_core::{EpOutput, impl_simple_operation};
+use error::{EpError, ResultEP};
+use format::endpoint::EpKind;
+use function_name::named;
+use serde_json::Value;
+use std::collections::HashMap;
+use telemetry::{FastSpanAttribute, TelemetryWrapper};
+
+const API_INFO: ApiInfo<AwsApi, Ec2CreateFlowLogsInput> =
+    ApiInfo::new(EpKind::Aws, AwsApi::Ec2CreateFlowLogs, "ec2_create_flow_logs", ReqType::Write, true);
+
+crate::aws_endpoint! {
+    Ec2CreateFlowLogs,
+    API_INFO,
+    struct {
+        resource_ids: Vec<String>,
+        resource_type: String,
+        traffic_type: String,
+        log_destination: Option<String>,
+        log_group_name: Option<String>
+    }
+}
+
+impl_simple_operation!(SimpleInput, AwsAsync, AwsTx, AwsApi, AwsRequest);
+
+impl SimpleInput {
+    #[named]
+    async fn run_async_generic(&self, context: AwsAsync, telemetry_wrapper: &mut TelemetryWrapper) -> ResultEP<Box<dyn EpOutput>> {
+        let mut span = telemetry_wrapper.client_tracer(format!("aws.{}.{}", API_INFO.api, function_name!()));
+        let client = context.get().await.map_err(EpError::request)?;
+
+        let mut params = HashMap::new();
+        params.extend(indexed_list_params("ResourceId", &self.resource_ids));
+        params.insert("ResourceType".to_string(), self.resource_type.clone());
+        params.insert("TrafficType".to_string(), self.traffic_type.clone());
+        if let Some(v) = &self.log_destination {
+            params.insert("LogDestination".to_string(), v.clone());
+        }
+        if let Some(v) = &self.log_group_name {
+            params.insert("LogGroupName".to_string(), v.clone());
+        }
+        let form_body = build_query_body("CreateFlowLogs", "2016-11-15", &params);
+        let result = client.execute_form("ec2", &form_body).await?;
+
+        span.add_event("received result from aws ec2", vec![FastSpanAttribute::new("type", API_INFO.api.to_string())]);
+        Ok(Box::new(AwsJsonOutput(Value::String(result)).to_output()) as Box<dyn EpOutput>)
+    }
+
+    #[named]
+    fn run_transaction_generic(&self, _context: &mut AwsTx, _telemetry_wrapper: &mut TelemetryWrapper) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builder_serde() {
+        let input = Ec2CreateFlowLogsInputBuilder::default()
+            .resource_ids(vec!["vpc-123".to_string()])
+            .resource_type("VPC")
+            .traffic_type("ALL")
+            .build()
+            .unwrap();
+        let json = serde_json::to_value(&input).unwrap();
+        assert_eq!(json["type"], "ec2_create_flow_logs");
+    }
+
+    #[test]
+    fn deserialize_minimal() {
+        let json = serde_json::json!({"resource_ids": ["vpc-123"], "resource_type": "VPC", "traffic_type": "ALL"});
+        let _: Ec2CreateFlowLogsInput = serde_json::from_value(json).unwrap();
+    }
+}

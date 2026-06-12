@@ -1,0 +1,58 @@
+INSERT INTO llm_gateway_usage_rollups (
+    organization_uuid,
+    consumer_kind,
+    consumer_id,
+    month_bucket,
+    endpoint_uuid,
+    request_count,
+    prompt_tokens,
+    completion_tokens,
+    total_tokens,
+    estimated_cost_micros,
+    cache_hit_count,
+    kv_cache_hit_count,
+    rate_limited_count,
+    updated_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13,
+    $14
+)
+ON CONFLICT (organization_uuid, consumer_kind, consumer_id, month_bucket) DO UPDATE
+SET
+    endpoint_uuid = COALESCE(EXCLUDED.endpoint_uuid, llm_gateway_usage_rollups.endpoint_uuid),
+    request_count = llm_gateway_usage_rollups.request_count + EXCLUDED.request_count,
+    prompt_tokens = llm_gateway_usage_rollups.prompt_tokens + EXCLUDED.prompt_tokens,
+    completion_tokens = llm_gateway_usage_rollups.completion_tokens + EXCLUDED.completion_tokens,
+    total_tokens = llm_gateway_usage_rollups.total_tokens + EXCLUDED.total_tokens,
+    estimated_cost_micros = llm_gateway_usage_rollups.estimated_cost_micros + EXCLUDED.estimated_cost_micros,
+    cache_hit_count = llm_gateway_usage_rollups.cache_hit_count + EXCLUDED.cache_hit_count,
+    kv_cache_hit_count = llm_gateway_usage_rollups.kv_cache_hit_count + EXCLUDED.kv_cache_hit_count,
+    rate_limited_count = llm_gateway_usage_rollups.rate_limited_count + EXCLUDED.rate_limited_count,
+    updated_at = EXCLUDED.updated_at
+RETURNING
+    organization_uuid,
+    consumer_kind,
+    consumer_id,
+    month_bucket,
+    endpoint_uuid,
+    request_count,
+    prompt_tokens,
+    completion_tokens,
+    total_tokens,
+    estimated_cost_micros,
+    cache_hit_count,
+    kv_cache_hit_count,
+    rate_limited_count,
+    updated_at;

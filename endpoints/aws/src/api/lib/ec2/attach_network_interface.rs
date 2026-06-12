@@ -1,0 +1,72 @@
+use crate::api::lib::AwsApi;
+use crate::api::lib::params::build_query_body;
+use crate::api::wrapper::output::AwsJsonOutput;
+use crate::request::AwsRequest;
+use crate::{ApiInfo, ReqType, RunOutput, ToOutput};
+use aws_core::{AwsAsync, AwsTx};
+use ep_core::{EpOutput, impl_simple_operation};
+use error::{EpError, ResultEP};
+use format::endpoint::EpKind;
+use function_name::named;
+use serde_json::Value;
+use std::collections::HashMap;
+use telemetry::{FastSpanAttribute, TelemetryWrapper};
+
+const API_INFO: ApiInfo<AwsApi, Ec2AttachNetworkInterfaceInput> =
+    ApiInfo::new(EpKind::Aws, AwsApi::Ec2AttachNetworkInterface, "ec2_attach_network_interface", ReqType::Write, true);
+
+crate::aws_endpoint! {
+    Ec2AttachNetworkInterface,
+    API_INFO,
+    struct {
+        network_interface_id: String,
+        instance_id: String,
+        device_index: i64
+    }
+}
+
+impl_simple_operation!(SimpleInput, AwsAsync, AwsTx, AwsApi, AwsRequest);
+
+impl SimpleInput {
+    #[named]
+    async fn run_async_generic(&self, context: AwsAsync, telemetry_wrapper: &mut TelemetryWrapper) -> ResultEP<Box<dyn EpOutput>> {
+        let mut span = telemetry_wrapper.client_tracer(format!("aws.{}.{}", API_INFO.api, function_name!()));
+        let client = context.get().await.map_err(EpError::request)?;
+
+        let mut params = HashMap::new();
+        params.insert("NetworkInterfaceId".to_string(), self.network_interface_id.clone());
+        params.insert("InstanceId".to_string(), self.instance_id.clone());
+        params.insert("DeviceIndex".to_string(), self.device_index.to_string());
+        let form_body = build_query_body("AttachNetworkInterface", "2016-11-15", &params);
+        let result = client.execute_form("ec2", &form_body).await?;
+
+        span.add_event("received result from aws ec2", vec![FastSpanAttribute::new("type", API_INFO.api.to_string())]);
+        Ok(Box::new(AwsJsonOutput(Value::String(result)).to_output()) as Box<dyn EpOutput>)
+    }
+
+    #[named]
+    fn run_transaction_generic(&self, _context: &mut AwsTx, _telemetry_wrapper: &mut TelemetryWrapper) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builder_serde() {
+        let input = Ec2AttachNetworkInterfaceInputBuilder::default()
+            .network_interface_id("eni-123")
+            .instance_id("i-123")
+            .device_index(1_i64)
+            .build()
+            .unwrap();
+        let json = serde_json::to_value(&input).unwrap();
+        assert_eq!(json["type"], "ec2_attach_network_interface");
+    }
+
+    #[test]
+    fn deserialize_minimal() {
+        let json = serde_json::json!({"network_interface_id": "eni-123", "instance_id": "i-123", "device_index": 1});
+        let _: Ec2AttachNetworkInterfaceInput = serde_json::from_value(json).unwrap();
+    }
+}

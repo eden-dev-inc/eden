@@ -1,0 +1,41 @@
+[package]
+name = "telemetry-exporters"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+embedded-db = ["database/embedded-db"]
+
+[build-dependencies]
+
+[dependencies]
+telemetry = { path = "../telemetry", features = ["otlp", "clickhouse"] }
+analytics_schema = { path = "../../database/analytics_schema" }
+database = { path = "../../database", default-features = false }
+fast-telemetry = { version = "0.5.1", features = ["otlp", "clickhouse"] }
+fast-telemetry-export = { version = "0.5.1", features = ["clickhouse"] }
+
+backon = { workspace = true }
+chrono = { workspace = true }
+clickhouse = { workspace = true }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+flate2 = { workspace = true }
+function_name = { workspace = true }
+indexmap = { workspace = true }
+log = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+prost = "0.13"
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+smol_str = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,1 @@
+-- Turso does not need PostgreSQL domain setup for RBAC shared types.

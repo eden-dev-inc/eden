@@ -1,0 +1,1 @@
+-- SQLite does not support PostgreSQL extensions; this is a no-op for Turso.

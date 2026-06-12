@@ -1,0 +1,76 @@
+use crate::api::lib::AwsApi;
+use crate::api::lib::params::{build_query_body, indexed_list_params};
+use crate::api::wrapper::output::AwsJsonOutput;
+use crate::request::AwsRequest;
+use crate::{ApiInfo, ReqType, RunOutput, ToOutput};
+use aws_core::{AwsAsync, AwsTx};
+use ep_core::{EpOutput, impl_simple_operation};
+use error::{EpError, ResultEP};
+use format::endpoint::EpKind;
+use function_name::named;
+use serde_json::Value;
+use std::collections::HashMap;
+use telemetry::{FastSpanAttribute, TelemetryWrapper};
+
+const API_INFO: ApiInfo<AwsApi, ElbV2DescribeListenersInput> =
+    ApiInfo::new(EpKind::Aws, AwsApi::ElbV2DescribeListeners, "elbv2_describe_listeners", ReqType::Read, true);
+
+crate::aws_endpoint! {
+    ElbV2DescribeListeners,
+    API_INFO,
+    struct {
+        load_balancer_arn: Option<String>,
+        listener_arns: Option<Vec<String>>,
+        marker: Option<String>
+    }
+}
+
+impl_simple_operation!(SimpleInput, AwsAsync, AwsTx, AwsApi, AwsRequest);
+
+impl SimpleInput {
+    #[named]
+    async fn run_async_generic(&self, context: AwsAsync, telemetry_wrapper: &mut TelemetryWrapper) -> ResultEP<Box<dyn EpOutput>> {
+        let mut span = telemetry_wrapper.client_tracer(format!("aws.{}.{}", API_INFO.api, function_name!()));
+        let client = context.get().await.map_err(EpError::request)?;
+
+        let mut params = HashMap::new();
+        if let Some(arn) = &self.load_balancer_arn {
+            params.insert("LoadBalancerArn".to_string(), arn.clone());
+        }
+        if let Some(arns) = &self.listener_arns {
+            params.extend(indexed_list_params("ListenerArns.member", arns));
+        }
+        if let Some(marker) = &self.marker {
+            params.insert("Marker".to_string(), marker.clone());
+        }
+        let form_body = build_query_body("DescribeListeners", "2015-12-01", &params);
+        let result = client.execute_form("elasticloadbalancing", &form_body).await?;
+
+        span.add_event(
+            "received result from aws elasticloadbalancing",
+            vec![FastSpanAttribute::new("type", API_INFO.api.to_string())],
+        );
+        Ok(Box::new(AwsJsonOutput(Value::String(result)).to_output()) as Box<dyn EpOutput>)
+    }
+
+    #[named]
+    fn run_transaction_generic(&self, _context: &mut AwsTx, _telemetry_wrapper: &mut TelemetryWrapper) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builder_serde() {
+        let input = ElbV2DescribeListenersInputBuilder::default().build().unwrap();
+        let json = serde_json::to_value(&input).unwrap();
+        assert_eq!(json["type"], "elbv2_describe_listeners");
+    }
+
+    #[test]
+    fn deserialize_minimal() {
+        let json = serde_json::json!({});
+        let _: ElbV2DescribeListenersInput = serde_json::from_value(json).unwrap();
+    }
+}

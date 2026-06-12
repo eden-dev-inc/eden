@@ -1,0 +1,48 @@
+[package]
+name = "ep-function"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+ep-core = { path = "../../endpoint-core/ep-core", default-features = false }
+function-core = { path = "../../endpoint-core/function-core", default-features = false }
+endpoint-derive = { path = "../endpoint-derive" }
+endpoint-types = { path = "../endpoint-types" }
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+
+base64 = { workspace = true }
+borsh = { workspace = true }
+bytes = { workspace = true }
+ctor = { workspace = true }
+dashmap = { workspace = true }
+deadpool = { workspace = true }
+derive_builder = { workspace = true }
+function_name = { workspace = true }
+lazy_static = { workspace = true }
+linkme = { workspace = true }
+opentelemetry = { workspace = true }
+paste = { workspace = true }
+reqwest = { workspace = true }
+rmcp = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+utoipa = { workspace = true }
+
+[dev-dependencies]
+aws-config = { workspace = true }
+aws-sdk-lambda = { workspace = true }
+endpoint-test-utils = { path = "../endpoint-test-utils" }
+httpmock = { workspace = true }
+testcontainers-modules = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[features]
+# Optional smoke tests that use real AWS credentials and Lambda APIs.
+# Ignored by default and opt-in only.
+function-aws-integration = []

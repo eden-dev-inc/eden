@@ -1,0 +1,32 @@
+[package]
+name = "clickhouse-core"
+version = "0.1.0"
+edition = "2024"
+
+
+[dependencies]
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+eden_logger = { path = "../../eden_core/eden_logger" }
+eden_logger_internal = { path = "../../eden_core/eden_logger_internal" }
+ep-core = { path = "../ep-core", default-features = false }
+clickhouse-wire = { path = "../../wire-protocol/clickhouse-wire" }
+wire-stream = { path = "../../wire-protocol/wire-stream" }
+function_name = { workspace = true }
+utoipa = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+borsh = { workspace = true }
+clickhouse = { workspace = true }
+uuid = { workspace = true }
+
+deadpool = { workspace = true }
+hyper = { workspace = true }
+opentelemetry = { workspace = true }
+bytes = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+log = { workspace = true }

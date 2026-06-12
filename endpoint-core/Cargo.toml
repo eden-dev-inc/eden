@@ -1,0 +1,98 @@
+[package]
+name = "endpoint-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+endpoint-schema = { path = "endpoint-schema", default-features = false }
+ep-core = { path = "ep-core", default-features = false }
+aws-core = { path = "aws-core", optional = true }
+azure-core = { path = "azure-core", optional = true }
+cassandra-core = { path = "cassandra-core", optional = true }
+clickhouse-core = { path = "clickhouse-core", optional = true }
+databricks-core = { path = "databricks-core", optional = true }
+datadog-core = { path = "datadog-core", default-features = false, optional = true }
+eraser-core = { path = "eraser-core", optional = true }
+function-core = { path = "function-core", optional = true }
+gitlab-core = { path = "gitlab-core", optional = true }
+gworkspace-core = { path = "gworkspace-core", optional = true }
+http-core = { path = "http-core", optional = true }
+llm-core = { path = "llm-core", optional = true }
+mssql-core = { path = "mssql-core", optional = true }
+mongo-core = { path = "mongo-core", optional = true }
+mysql-core = { path = "mysql-core", optional = true }
+oracle-core = { path = "oracle-core", optional = true }
+pinecone-core = { path = "pinecone-core", optional = true }
+postgres-core = { path = "postgres-core", optional = true }
+redis-core = { path = "redis-core", optional = true }
+salesforce-core = { path = "salesforce-core", optional = true }
+s3-core = { path = "s3-core", optional = true }
+snowflake-core = { path = "snowflake-core", optional = true }
+tavily-core = { path = "tavily-core", optional = true }
+weaviate-core = { path = "weaviate-core", optional = true }
+redis = { workspace = true }
+
+[dev-dependencies]
+
+[features]
+default = []
+all = [
+  "aws",
+  "azure",
+  "cassandra",
+  "clickhouse",
+  "databricks",
+  "datadog",
+  "elasticache",
+  "eraser",
+  "function",
+  "gitlab",
+  "gworkspace",
+  "http",
+  "llm",
+  "mongo",
+  "mssql",
+  "mysql",
+  "oracle",
+  "pinecone",
+  "postgres",
+  "posthog",
+  "rds",
+  "redis",
+  "s3",
+  "salesforce",
+  "snowflake",
+  "tavily",
+  "weaviate",
+]
+embedded-db = ["endpoint-schema/embedded-db", "ep-core/embedded-db", "llm-core?/embedded-db"]
+azure = ["dep:azure-core", "endpoint-schema/azure"]
+cassandra = ["dep:cassandra-core", "endpoint-schema/cassandra"]
+clickhouse = ["dep:clickhouse-core", "endpoint-schema/clickhouse"]
+databricks = ["dep:databricks-core", "endpoint-schema/databricks"]
+datadog = ["dep:datadog-core", "datadog-core/sdk", "endpoint-schema/datadog"]
+elasticache = ["endpoint-schema/elasticache", "redis"]
+eraser = ["dep:eraser-core", "endpoint-schema/eraser"]
+function = ["dep:function-core", "endpoint-schema/function"]
+gitlab = ["dep:gitlab-core", "endpoint-schema/gitlab"]
+gworkspace = ["dep:gworkspace-core", "endpoint-schema/gworkspace"]
+http = ["dep:http-core", "endpoint-schema/http"]
+llm = ["dep:llm-core", "endpoint-schema/llm"]
+mongo = ["dep:mongo-core", "endpoint-schema/mongo"]
+mssql = ["dep:mssql-core", "endpoint-schema/mssql"]
+mysql = ["dep:mysql-core", "endpoint-schema/mysql"]
+oracle = ["dep:oracle-core", "endpoint-schema/oracle"]
+pinecone = ["dep:pinecone-core", "endpoint-schema/pinecone"]
+postgres = ["dep:postgres-core", "endpoint-schema/postgres"]
+posthog = ["endpoint-schema/posthog"]
+rds = ["endpoint-schema/rds", "postgres"]
+redis = ["dep:redis-core", "endpoint-schema/redis"]
+s3 = ["dep:s3-core", "endpoint-schema/s3"]
+salesforce = ["dep:salesforce-core", "endpoint-schema/salesforce"]
+snowflake = ["dep:snowflake-core", "endpoint-schema/snowflake"]
+tavily = ["dep:tavily-core", "endpoint-schema/tavily"]
+weaviate = ["dep:weaviate-core", "endpoint-schema/weaviate"]
+aws = ["dep:aws-core", "endpoint-schema/aws", "function", "s3", "rds", "elasticache"]
+
+[lints]
+workspace = true

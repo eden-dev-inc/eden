@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS org_key_refs (
+    org_uuid UUID PRIMARY KEY REFERENCES organizations(uuid),
+    provider VARCHAR(32) NOT NULL DEFAULT 'env',
+    key_ref TEXT NOT NULL,
+    key_version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    rotated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);

@@ -1,0 +1,17 @@
+[package]
+name = "weaviate-wire"
+description = "Weaviate Wire Protocol (HTTP REST + gRPC) parser"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["grpc"]
+grpc = []
+
+[dependencies]
+thiserror = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true

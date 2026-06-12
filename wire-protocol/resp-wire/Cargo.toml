@@ -1,0 +1,27 @@
+[package]
+name = "resp-wire"
+description = "RESP (Redis Serialization Protocol) streaming parser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wire-stream = { workspace = true }
+thiserror = { workspace = true }
+memchr = { workspace = true }
+redis-protocol = "6.0.0"
+
+[dev-dependencies]
+pollster = { workspace = true }
+criterion = { workspace = true }
+proptest = { workspace = true }
+
+[[bench]]
+name = "resp_parsing"
+harness = false
+
+[[bench]]
+name = "pipeline_comparison"
+harness = false
+
+[lints]
+workspace = true

@@ -1,0 +1,258 @@
+[package]
+name = "eden-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+telemetry-extensions-macro = { path = "telemetry-extensions-macro" }
+ep-runtime = { path = "../ep-runtime", default-features = false }
+eden_config = { path = "../eden_config" }
+eden-core = { path = "../eden_core" }
+telemetry-exporters = { path = "../eden_core/telemetry-exporters", optional = true }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+eden_gateway = { path = "../eden_gateway", default-features = false }
+endpoint-core = { path = "../endpoint-core", default-features = false }
+endpoint-schema = { path = "../endpoint-core/endpoint-schema", default-features = false }
+endpoint-openapi = { path = "../endpoints/endpoint-openapi", default-features = false, optional = true }
+endpoint-types = { path = "../endpoints/endpoint-types", optional = true }
+endpoints = { path = "../endpoints", default-features = false }
+database = { path = "../database", default-features = false }
+analytics_schema = { path = "../database/analytics_schema", default-features = false }
+ch-push = { path = "../database/ch-push", optional = true }
+llm = { workspace = true, optional = true }
+rmcp = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+backon = { workspace = true }
+base64 = { workspace = true }
+cron = { workspace = true }
+cfg-if = { workspace = true }
+
+deadpool = { workspace = true }
+actix-cors = { workspace = true }
+actix-web-httpauth = { workspace = true }
+actix-rt = { workspace = true }
+actix-web = { workspace = true }
+actix-governor = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+function_name = { workspace = true }
+borsh = { workspace = true }
+crossbeam-channel = { workspace = true }
+indexmap = { workspace = true }
+libc = { workspace = true }
+moka = { workspace = true }
+sha2 = { workspace = true }
+email_address = { workspace = true }
+env_logger = { workspace = true }
+hex = { workspace = true }
+hmac = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true }
+regex = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true }
+serde_json = { workspace = true }
+# tonic = {verison = "0.11", features = ["gzip", "tls", "tls-roots", "transport"] }
+# tonic = { version = "0.11.0", features = ["tls"] }
+tonic = { workspace = true }
+tokio-postgres = { workspace = true }
+redis = { workspace = true }
+redis-protocol = { workspace = true }
+bytes = { workspace = true }
+fast-telemetry = "0.5.1"
+memchr = { workspace = true }
+actix-http = { workspace = true }
+opentelemetry = { workspace = true }
+async-stream = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+tokio-stream = { workspace = true }
+tokio-util = { workspace = true }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+rustc-hash = { workspace = true }
+once_cell = { workspace = true }
+reqwest = { workspace = true }
+schemars = { workspace = true }
+sqlparser = { workspace = true }
+lru = { workspace = true, optional = true }
+clickhouse = { workspace = true }
+testcontainers-modules = { workspace = true, optional = true }
+rust-embed = { version = "8", optional = true }
+mime_guess = { version = "2", optional = true }
+brotli = { workspace = true, optional = true }
+flate2 = { workspace = true, optional = true }
+
+[build-dependencies]
+
+[dev-dependencies]
+criterion = { workspace = true }
+database = { path = "../database", default-features = false, features = [
+    "test-utils",
+] }
+endpoint-types = { path = "../endpoints/endpoint-types" }
+futures = { workspace = true }
+http = "1.3.1"
+http-body-util = "0.1.3"
+reqwest = { workspace = true }
+r2d2 = { workspace = true }
+rayon = { workspace = true }
+serial_test = { workspace = true }
+serde_json = { workspace = true }
+testcontainers-modules = { workspace = true }
+tokio-tungstenite = { workspace = true }
+uuid = { workspace = true }
+
+
+[features]
+openapi = ["all-endpoints", "llm", "dep:endpoint-openapi", "dep:utoipa-swagger-ui"]
+# Default to the standard server runtime shape: per-request
+# usage tracking, and request analytics. The `external_db` cfg is emitted by
+# build.rs whenever the local-only `embedded-db` mode is not enabled, so plain
+# builds target the Redis/Postgres-backed runtime by default.
+default = ["api-usage-tracking", "telemetry-export"]
+infra-tests = ["postgres", "redis"]
+llm = [
+    "dep:llm",
+    "analytics_schema/llm",    "database/llm",
+    "endpoint-core/llm",
+    "endpoint-schema/llm",
+    "endpoints/llm",
+    "ep-runtime/llm",
+    "eden_gateway/llm",]
+all-endpoints = [
+    "aws",
+    "azure",
+    "cassandra",
+    "clickhouse",
+    "databricks",
+    "datadog",
+    "elasticache",
+    "eraser",
+    "function",
+    "gitlab",
+    "gworkspace",
+    "http",
+    "redis",
+    "postgres",
+    "mongo",
+    "mssql",
+    "mysql",
+    "oracle",
+    "pinecone",
+    "posthog",
+    "rds",
+    "s3",
+    "salesforce",
+    "snowflake",
+    "tavily",
+    "weaviate",
+    "ep-runtime/all",
+    "database/all",
+    "endpoint-core/all",
+    "endpoint-schema/all",
+    "endpoint-openapi?/all",
+    "endpoints/all",    "eden_gateway/redis",
+    "eden_gateway/postgres",
+    "eden_gateway/mongo",
+    "eden_gateway/llm",]
+aws = [
+    "ep-runtime/aws",
+    "database/aws",
+    "endpoint-core/aws",
+    "endpoint-schema/aws",
+    "endpoint-openapi?/aws",
+    "endpoints/aws",]
+datadog = [
+    "ep-runtime/datadog",
+    "database/datadog",
+    "endpoint-core/datadog",
+    "endpoint-schema/datadog",
+    "endpoint-openapi?/datadog",
+    "endpoints/datadog",]
+function = ["ep-runtime/function", "database/function", "endpoint-core/function", "endpoint-schema/function", "endpoint-openapi?/function", "endpoints/function"]
+s3 = ["ep-runtime/s3", "database/s3", "endpoint-core/s3", "endpoint-schema/s3", "endpoint-openapi?/s3", "endpoints/s3"]
+rds = ["ep-runtime/rds", "database/rds", "endpoint-core/rds", "endpoint-schema/rds", "endpoint-openapi?/rds", "endpoints/rds"]
+elasticache = ["ep-runtime/elasticache", "database/elasticache", "endpoint-core/elasticache", "endpoint-schema/elasticache", "endpoint-openapi?/elasticache", "endpoints/elasticache"]
+azure = ["ep-runtime/azure", "database/azure", "endpoint-core/azure", "endpoint-schema/azure", "endpoint-openapi?/azure", "endpoints/azure"]
+cassandra = ["ep-runtime/cassandra", "database/cassandra", "endpoint-core/cassandra", "endpoint-schema/cassandra", "endpoint-openapi?/cassandra", "endpoints/cassandra"]
+clickhouse = ["ep-runtime/clickhouse", "database/clickhouse", "endpoint-core/clickhouse", "endpoint-schema/clickhouse", "endpoint-openapi?/clickhouse", "endpoints/clickhouse"]
+databricks = ["ep-runtime/databricks", "database/databricks", "endpoint-core/databricks", "endpoint-schema/databricks", "endpoint-openapi?/databricks", "endpoints/databricks"]
+eraser = ["ep-runtime/eraser", "database/eraser", "endpoint-core/eraser", "endpoint-schema/eraser", "endpoint-openapi?/eraser", "endpoints/eraser"]
+gitlab = ["ep-runtime/gitlab", "database/gitlab", "endpoint-core/gitlab", "endpoint-schema/gitlab", "endpoint-openapi?/gitlab", "endpoints/gitlab"]
+gworkspace = ["ep-runtime/gworkspace", "database/gworkspace", "endpoint-core/gworkspace", "endpoint-schema/gworkspace", "endpoint-openapi?/gworkspace", "endpoints/gworkspace"]
+http = ["ep-runtime/http", "database/http", "endpoint-core/http", "endpoint-schema/http", "endpoint-openapi?/http", "endpoints/http"]
+mssql = ["ep-runtime/mssql", "database/mssql", "endpoint-core/mssql", "endpoint-schema/mssql", "endpoint-openapi?/mssql", "endpoints/mssql"]
+mysql = ["ep-runtime/mysql", "database/mysql", "endpoint-core/mysql", "endpoint-schema/mysql", "endpoint-openapi?/mysql", "endpoints/mysql"]
+oracle = ["ep-runtime/oracle", "database/oracle", "endpoint-core/oracle", "endpoint-schema/oracle", "endpoint-openapi?/oracle", "endpoints/oracle"]
+pinecone = ["ep-runtime/pinecone", "database/pinecone", "endpoint-core/pinecone", "endpoint-schema/pinecone", "endpoint-openapi?/pinecone", "endpoints/pinecone"]
+posthog = ["ep-runtime/posthog", "database/posthog", "endpoint-core/posthog", "endpoint-schema/posthog", "endpoint-openapi?/posthog", "endpoints/posthog"]
+salesforce = ["ep-runtime/salesforce", "database/salesforce", "endpoint-core/salesforce", "endpoint-schema/salesforce", "endpoint-openapi?/salesforce", "endpoints/salesforce"]
+snowflake = ["ep-runtime/snowflake", "database/snowflake", "endpoint-core/snowflake", "endpoint-schema/snowflake", "endpoint-openapi?/snowflake", "endpoints/snowflake"]
+tavily = ["ep-runtime/tavily", "database/tavily", "endpoint-core/tavily", "endpoint-schema/tavily", "endpoint-openapi?/tavily", "endpoints/tavily"]
+weaviate = ["ep-runtime/weaviate", "database/weaviate", "endpoint-core/weaviate", "endpoint-schema/weaviate", "endpoint-openapi?/weaviate", "endpoints/weaviate"]
+
+# API usage tracking middleware - records per-request usage stats to ClickHouse
+api-usage-tracking = []
+telemetry-export = ["dep:telemetry-exporters", "dep:tracing-opentelemetry"]
+
+# Embed and serve the Leptos dashboard SPA (eden_dashboard/dist) from this
+# binary. Requires `trunk build --release` in eden_dashboard first.
+embedded-dashboard = ["dep:rust-embed", "dep:mime_guess", "dep:brotli", "dep:flate2"]
+
+# Narrow endpoint runtime gates. These keep `ep-runtime` from compiling
+# unrelated endpoint implementations when only one database endpoint is needed.
+mongo = ["ep-runtime/mongo", "database/mongo", "endpoint-core/mongo", "endpoint-openapi?/mongo", "endpoints/mongo", "eden_gateway/mongo"]
+postgres = ["ep-runtime/postgres", "database/postgres", "endpoint-core/postgres", "endpoint-openapi?/postgres", "endpoints/postgres", "eden_gateway/postgres"]
+redis = ["ep-runtime/redis", "database/redis", "endpoint-core/redis", "endpoint-openapi?/redis", "endpoints/redis", "eden_gateway/redis"]
+
+# Logging level features (forward to eden_logger_internal and eden_gateway)
+log-trace = ["eden_logger_internal/log-trace", "eden_gateway/log-trace"]
+log-debug = ["eden_logger_internal/log-debug"]
+log-info = ["eden_logger_internal/log-info"]
+log-warn = ["eden_logger_internal/log-warn"]
+log-error = ["eden_logger_internal/log-error"]
+
+# Logging audience features (forward to eden_logger)
+log-client = ["eden_logger_internal/log-client"]
+log-internal = ["eden_logger_internal/log-internal"]
+log-both = ["eden_logger_internal/log-both"]
+
+# Source location in logs (forward to eden_logger)
+source-location = ["eden_logger_internal/source-location"]
+
+# Full logging (all levels + audiences + source location)
+full-logging = ["eden_logger_internal/full"]
+test-utils = ["database/test-utils", "dep:testcontainers-modules"]
+rate-limiting = []
+poll-clickhouse = ["dep:ch-push"]
+stream = []
+embedded-db = [
+    "database/embedded-db",
+    "telemetry-exporters?/embedded-db",    "endpoint-core/embedded-db",
+    "endpoints/embedded-db",
+    "eden_gateway/embedded-db",
+]
+# Full runtime bundle for Redis/Postgres-backed deployments. This keeps
+# analytics, streaming, and OpenAPI enabled without pulling in
+# the local-only `embedded-db` backend.
+server-runtime = [
+    "all-endpoints",
+    "llm",
+    "openapi",
+    "poll-clickhouse",
+    "embedded-dashboard",
+    "telemetry-export",
+]
+
+[lints]
+workspace = true

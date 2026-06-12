@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS llm_gateway_response_cache (
+    cache_key TEXT PRIMARY KEY,
+    organization_uuid UUID NOT NULL REFERENCES organizations(uuid) ON DELETE CASCADE,
+    endpoint_uuid UUID NOT NULL REFERENCES endpoints(uuid) ON DELETE CASCADE,
+    key_id UUID NOT NULL REFERENCES llm_gateway_api_keys(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    prompt_fingerprint TEXT,
+    response_json JSONB NOT NULL,
+    prompt_tokens BIGINT NOT NULL DEFAULT 0,
+    completion_tokens BIGINT NOT NULL DEFAULT 0,
+    total_tokens BIGINT NOT NULL DEFAULT 0,
+    estimated_cost_micros BIGINT NOT NULL DEFAULT 0,
+    hit_count BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    last_hit_at TIMESTAMP WITH TIME ZONE
+);

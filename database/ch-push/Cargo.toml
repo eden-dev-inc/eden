@@ -1,0 +1,15 @@
+[package]
+name = "ch-push"
+version = "0.1.0"
+edition = "2024"
+description = "ClickHouse push infrastructure (batching, retry, circuit breaker)"
+
+[dependencies]
+backon = { workspace = true }
+chrono = { workspace = true }
+clickhouse = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

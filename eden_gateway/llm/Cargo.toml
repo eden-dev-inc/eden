@@ -1,0 +1,28 @@
+[package]
+name = "gateway-llm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eden-gateway-core = { path = "../core" }
+eden-core = { path = "../../eden_core" }
+eden_logger = { workspace = true }
+eden_logger_internal = { workspace = true }
+endpoint-core = { path = "../../endpoint-core", default-features = false, features = ["llm"] }
+endpoints = { path = "../../endpoints", default-features = false, features = ["llm"] }
+ep-core = { path = "../../endpoint-core/ep-core", default-features = false }
+
+bytes = { workspace = true }
+dashmap = { workspace = true }
+futures-util = { workspace = true }
+httparse = "1.10.1"
+itoa = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+default = []
+
+[lints]
+workspace = true

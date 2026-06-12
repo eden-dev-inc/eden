@@ -1,0 +1,44 @@
+[package]
+name = "eden_logger_internal"
+version = "0.1.0"
+edition = "2024"
+description = "Eden-specific wrapper around eden_logger: defines EdenRequestFields and re-exports the logging API."
+
+[dependencies]
+eden_logger = { path = "../eden_logger" }
+serde = { workspace = true }
+smol_str = { workspace = true }
+
+[features]
+# Forwarded log-level features
+log-trace = ["eden_logger/log-trace"]
+log-debug = ["eden_logger/log-debug"]
+log-info = ["eden_logger/log-info"]
+log-warn = ["eden_logger/log-warn"]
+log-error = ["eden_logger/log-error"]
+
+# Forwarded audience features
+log-client = ["eden_logger/log-client"]
+log-internal = ["eden_logger/log-internal"]
+log-both = ["eden_logger/log-both"]
+
+# Forwarded source location feature
+source-location = ["eden_logger/source-location"]
+
+# Forwarded trace context features
+fast-telemetry-context = ["eden_logger/fast-telemetry-context"]
+otel-context = ["eden_logger/otel-context"]
+
+# Forwarded function-name capture in ctx_with_trace!()
+function-name = ["eden_logger/function-name"]
+
+# Forwarded serde feature (enables `to_json`, `install_sink`, and serde
+# derives on log types). Eden's `production`/`full` profiles include this.
+serde = ["eden_logger/serde"]
+
+# Forwarded preset profiles
+production = ["eden_logger/production"]
+full = ["eden_logger/full"]
+
+[lints]
+workspace = true

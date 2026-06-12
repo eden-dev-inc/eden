@@ -1,0 +1,45 @@
+[package]
+name = "gateway-redis"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eden-gateway-core = { path = "../core" }
+ep-runtime = { path = "../../ep-runtime", default-features = false, features = ["redis"] }
+database = { path = "../../database", default-features = false }
+eden-core = { path = "../../eden_core" }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+endpoint-schema = { path = "../../endpoint-core/endpoint-schema", default-features = false }
+ep-core = { path = "../../endpoint-core/ep-core", default-features = false }
+redis-core = { path = "../../endpoint-core/redis-core" }
+endpoints = { path = "../../endpoints", default-features = false, features = ["redis"] }
+
+bytes = { workspace = true }
+backon = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+deadpool = { workspace = true }
+eden_config = { path = "../../eden_config" }
+memchr = { workspace = true }
+once_cell = { workspace = true }
+opentelemetry = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tonic = { workspace = true }
+utoipa = { workspace = true }
+
+[features]
+default = []
+
+[dev-dependencies]
+criterion = { workspace = true }
+endpoint-core = { path = "../../endpoint-core", default-features = false }
+serial_test = { workspace = true }
+testcontainers-modules = { workspace = true, features = ["redis"] }
+env_logger = { workspace = true }
+
+[lints]
+workspace = true

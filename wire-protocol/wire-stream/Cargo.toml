@@ -1,0 +1,17 @@
+[package]
+name = "wire-stream"
+description = "Protocol-agnostic streaming primitives for zero-copy wire protocol parsing"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror = { workspace = true }
+memchr = { workspace = true }
+elsa = { workspace = true }
+
+[dev-dependencies]
+pollster = { workspace = true }
+proptest = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,430 @@
+use crate::api::lib::{RedisApi, RedisCommandInput};
+use crate::api::{key::RedisKey, value::RedisJsonValue};
+use crate::protocol::RedisProtocol;
+use crate::protocol::decoder::{DecoderRespFrame, Resp2Frame, Resp3Frame};
+use crate::{ApiInfo, ReqType, impl_redis_operation};
+use derive_builder::Builder;
+use eden_logger_internal::{LogAudience, ctx_with_trace, log_warn};
+use endpoint_derive::DocumentInput;
+use endpoint_types::protocol::EpProtocol;
+use format::endpoint::EpKind;
+use function_name::named;
+use schemars::JsonSchema;
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
+use std::fmt::Debug;
+use utoipa::{PartialSchema, ToSchema};
+
+const API_INFO: ApiInfo<RedisApi, AppendInput> = ApiInfo::new(
+    EpKind::Redis,
+    RedisApi::Append,
+    "Appends a string to the value of a key. Creates the key if it doesn't exist",
+    ReqType::Write,
+    true,
+);
+
+/// See official Redis documentation for `APPEND`
+/// https://redis.io/docs/latest/commands/append/
+#[derive(Debug, Deserialize, Clone, Builder, ToSchema, DocumentInput, JsonSchema)]
+pub struct AppendInput {
+    pub(crate) key: RedisKey,
+    pub(crate) value: RedisJsonValue,
+}
+
+impl Serialize for AppendInput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("AppendInput", 3)?;
+        state.serialize_field("type", &API_INFO.api.to_string())?;
+        state.serialize_field("key", &self.key)?;
+        state.serialize_field("value", &self.value)?;
+        state.end()
+    }
+}
+
+impl_redis_operation!(
+    AppendInput,
+    API_INFO,
+    {key, value}
+);
+
+impl RedisCommandInput for AppendInput {
+    fn kind(&self) -> RedisApi {
+        API_INFO.api
+    }
+    fn keys(&self) -> Vec<RedisKey> {
+        vec![self.key.clone()]
+    }
+    fn command(&self) -> bytes::Bytes {
+        let mut command = crate::command::cmd(&API_INFO.api.to_string());
+
+        command.arg(&self.key).arg(&self.value);
+
+        command.get_packed_command()
+    }
+    #[named]
+    fn decode(args: Vec<RedisJsonValue>) -> Result<Self, EpError>
+    where
+        Self: Sized,
+    {
+        if args.len() < 2 {
+            return Err(EpError::request(format!("APPEND requires 2 arguments, given {}", args.len(),)));
+        } else if args.len() > 2 {
+            let _ctx = ctx_with_trace!().with_feature("redis");
+            log_warn!(
+                _ctx,
+                "APPEND expects 2 arguments, given {}",
+                audience = LogAudience::Client,
+                args_given = args.len()
+            );
+        }
+
+        Ok(Self { key: args[0].clone().try_into()?, value: args[1].clone() })
+    }
+}
+
+/// Output for Redis APPEND command
+///
+/// Returns the length of the string after the append operation.
+#[derive(Debug, Deserialize, Clone, ToSchema, JsonSchema)]
+pub struct AppendOutput {
+    /// The length of the string after appending
+    length: i64,
+}
+
+impl AppendOutput {
+    pub fn new(length: i64) -> Self {
+        Self { length }
+    }
+
+    /// Get the resulting string length
+    pub fn length(&self) -> i64 {
+        self.length
+    }
+
+    /// Decode the Redis protocol response into an AppendOutput
+    pub fn decode(bytes: &[u8]) -> Result<Self, EpError> {
+        let (frame, _) = RedisProtocol::decode_buffer(bytes).ok_or_else(|| EpError::parse("incomplete RESP frame"))?;
+
+        let length = match frame {
+            DecoderRespFrame::Resp2(resp2_frame) => match resp2_frame {
+                Resp2Frame::Integer(n) => n,
+                Resp2Frame::Error(e) => return Err(EpError::parse(e)),
+                other => {
+                    return Err(EpError::parse(format!("unexpected APPEND response: {:?}", other)));
+                }
+            },
+            DecoderRespFrame::Resp3(resp3_frame) => match resp3_frame {
+                Resp3Frame::Number { data, .. } => data,
+                Resp3Frame::SimpleError { data, .. } => return Err(EpError::parse(data)),
+                Resp3Frame::BlobError { data, .. } => {
+                    return Err(EpError::parse(String::from_utf8_lossy(&data).to_string()));
+                }
+                other => {
+                    return Err(EpError::parse(format!("unexpected APPEND response: {:?}", other)));
+                }
+            },
+        };
+
+        Ok(Self { length })
+    }
+}
+
+impl Serialize for AppendOutput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("AppendOutput", 1)?;
+        state.serialize_field("length", &self.length)?;
+        state.end()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod unit {
+        use super::*;
+
+        #[test]
+        fn test_encode_command() {
+            let input = AppendInput {
+                key: RedisKey::String("mykey".into()),
+                value: RedisJsonValue::String("Hello".into()),
+            };
+            assert_eq!(input.command().to_vec(), b"*3\r\n$6\r\nAPPEND\r\n$5\r\nmykey\r\n$5\r\nHello\r\n");
+        }
+
+        #[test]
+        fn test_decode_integer_response() {
+            let output = AppendOutput::decode(b":11\r\n").unwrap();
+            assert_eq!(output.length(), 11);
+        }
+
+        #[test]
+        fn test_decode_zero_length() {
+            let output = AppendOutput::decode(b":0\r\n").unwrap();
+            assert_eq!(output.length(), 0);
+        }
+
+        #[test]
+        fn test_decode_error_fails() {
+            let err = AppendOutput::decode(b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n").unwrap_err();
+            assert!(err.to_string().contains("WRONGTYPE"));
+        }
+
+        #[test]
+        fn test_decode_input_valid() {
+            let args = vec![RedisJsonValue::String("key".into()), RedisJsonValue::String("value".into())];
+            let input = AppendInput::decode(args).unwrap();
+            assert_eq!(input.key, RedisKey::String("key".into()));
+            assert_eq!(input.value, RedisJsonValue::String("value".into()));
+        }
+
+        #[test]
+        fn test_decode_input_too_few_args() {
+            let args = vec![RedisJsonValue::String("key".into())];
+            let err = AppendInput::decode(args).unwrap_err();
+            assert!(err.to_string().contains("requires 2 arguments"));
+        }
+
+        #[test]
+        fn test_keys_returns_single_key() {
+            let input = AppendInput {
+                key: RedisKey::String("mykey".into()),
+                value: RedisJsonValue::String("val".into()),
+            };
+            let keys = input.keys();
+            assert_eq!(keys.len(), 1);
+            assert_eq!(keys[0], RedisKey::String("mykey".into()));
+        }
+    }
+
+    #[cfg(feature = "integration")]
+    mod integration {
+        use super::*;
+        use crate::api::GetInput;
+        use crate::api::SetInput;
+        use crate::api::get::GetOutput;
+        use crate::test_utils::*;
+        use serial_test::serial;
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[serial]
+        async fn test_append_new_key() {
+            test_all_protocols(|ctx| {
+                Box::pin(async move {
+                    let result = ctx
+                        .raw(
+                            &AppendInput {
+                                key: RedisKey::String("append_new".into()),
+                                value: RedisJsonValue::String("Hello".into()),
+                            }
+                            .command(),
+                        )
+                        .await
+                        .expect("raw failed");
+
+                    let output = AppendOutput::decode(&result).expect("decode failed");
+                    assert_eq!(output.length(), 5);
+                })
+            })
+            .await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[serial]
+        async fn test_append_existing_key() {
+            test_all_protocols(|ctx| {
+                Box::pin(async move {
+                    // Set initial value
+                    ctx.raw(
+                        &SetInput {
+                            key: RedisKey::String("append_exist".into()),
+                            value: RedisJsonValue::String("Hello".into()),
+                            ..Default::default()
+                        }
+                        .command(),
+                    )
+                    .await
+                    .expect("raw failed");
+
+                    // Append to it
+                    let result = ctx
+                        .raw(
+                            &AppendInput {
+                                key: RedisKey::String("append_exist".into()),
+                                value: RedisJsonValue::String(" World".into()),
+                            }
+                            .command(),
+                        )
+                        .await
+                        .expect("raw failed");
+
+                    let output = AppendOutput::decode(&result).expect("decode failed");
+                    assert_eq!(output.length(), 11); // "Hello World"
+
+                    // Verify the value
+                    let get_result =
+                        ctx.raw(&GetInput { key: RedisKey::String("append_exist".into()) }.command()).await.expect("raw failed");
+
+                    let get_output = GetOutput::decode(&get_result).expect("decode failed");
+                    assert_eq!(get_output.value(), Some(&RedisJsonValue::from("Hello World")));
+                })
+            })
+            .await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[serial]
+        async fn test_append_empty_string() {
+            test_all_protocols(|ctx| {
+                Box::pin(async move {
+                    ctx.raw(
+                        &SetInput {
+                            key: RedisKey::String("append_empty".into()),
+                            value: RedisJsonValue::String("test".into()),
+                            ..Default::default()
+                        }
+                        .command(),
+                    )
+                    .await
+                    .expect("raw failed");
+
+                    let result = ctx
+                        .raw(
+                            &AppendInput {
+                                key: RedisKey::String("append_empty".into()),
+                                value: RedisJsonValue::String("".into()),
+                            }
+                            .command(),
+                        )
+                        .await
+                        .expect("raw failed");
+
+                    let output = AppendOutput::decode(&result).expect("decode failed");
+                    assert_eq!(output.length(), 4); // Still "test"
+                })
+            })
+            .await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[serial]
+        async fn test_append_multiple() {
+            test_all_protocols(|ctx| {
+                Box::pin(async move {
+                    let result1 = ctx
+                        .raw(
+                            &AppendInput {
+                                key: RedisKey::String("append_multi".into()),
+                                value: RedisJsonValue::String("A".into()),
+                            }
+                            .command(),
+                        )
+                        .await
+                        .expect("raw failed");
+                    assert_eq!(AppendOutput::decode(&result1).unwrap().length(), 1);
+
+                    let result2 = ctx
+                        .raw(
+                            &AppendInput {
+                                key: RedisKey::String("append_multi".into()),
+                                value: RedisJsonValue::String("B".into()),
+                            }
+                            .command(),
+                        )
+                        .await
+                        .expect("raw failed");
+                    assert_eq!(AppendOutput::decode(&result2).unwrap().length(), 2);
+
+                    let result3 = ctx
+                        .raw(
+                            &AppendInput {
+                                key: RedisKey::String("append_multi".into()),
+                                value: RedisJsonValue::String("C".into()),
+                            }
+                            .command(),
+                        )
+                        .await
+                        .expect("raw failed");
+                    assert_eq!(AppendOutput::decode(&result3).unwrap().length(), 3);
+                })
+            })
+            .await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[serial]
+        async fn test_append_pipeline() {
+            test_all_protocols(|ctx| {
+                Box::pin(async move {
+                    let mut pipeline = Vec::new();
+                    pipeline.extend_from_slice(
+                        &AppendInput {
+                            key: RedisKey::String("pipe_append".into()),
+                            value: RedisJsonValue::String("Hello".into()),
+                        }
+                        .command(),
+                    );
+                    pipeline.extend_from_slice(
+                        &AppendInput {
+                            key: RedisKey::String("pipe_append".into()),
+                            value: RedisJsonValue::String(" ".into()),
+                        }
+                        .command(),
+                    );
+                    pipeline.extend_from_slice(
+                        &AppendInput {
+                            key: RedisKey::String("pipe_append".into()),
+                            value: RedisJsonValue::String("World".into()),
+                        }
+                        .command(),
+                    );
+
+                    let result = ctx.raw(&pipeline).await.expect("raw failed");
+                    let responses = RedisProtocol::parse_pipeline_response_zerocopy(&result).expect("parse pipeline");
+
+                    assert_eq!(responses.len(), 3);
+
+                    let out1 = AppendOutput::decode(responses[0]).expect("decode first");
+                    assert_eq!(out1.length(), 5);
+
+                    let out2 = AppendOutput::decode(responses[1]).expect("decode second");
+                    assert_eq!(out2.length(), 6);
+
+                    let out3 = AppendOutput::decode(responses[2]).expect("decode third");
+                    assert_eq!(out3.length(), 11);
+                })
+            })
+            .await;
+        }
+
+        #[tokio::test(flavor = "multi_thread")]
+        #[serial]
+        async fn test_append_resp2_integer_format() {
+            let mut ctx = setup(RespVersion::Resp2, None).await;
+
+            let result = ctx
+                .raw(
+                    &AppendInput {
+                        key: RedisKey::String("r2key".into()),
+                        value: RedisJsonValue::String("test".into()),
+                    }
+                    .command(),
+                )
+                .await
+                .expect("raw failed");
+
+            assert_eq!(&result[..], b":4\r\n", "RESP2 integer format");
+            let output = AppendOutput::decode(&result).expect("decode failed");
+            assert_eq!(output.length(), 4);
+
+            ctx.stop().await;
+        }
+    }
+}

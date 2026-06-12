@@ -1,0 +1,45 @@
+[package]
+name = "ep-weaviate"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+integration = []
+
+[dependencies]
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+ep-core = { path = "../../endpoint-core/ep-core", default-features = false }
+weaviate-core = { path = "../../endpoint-core/weaviate-core", default-features = false }
+endpoint-derive = { path = "../endpoint-derive" }
+endpoint-types = { path = "../endpoint-types" }
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+
+borsh = { workspace = true }
+bytes = { workspace = true }
+ctor = { workspace = true }
+dashmap = { workspace = true }
+derive_builder = { workspace = true }
+function_name = { workspace = true }
+lazy_static = { workspace = true }
+linkme = { workspace = true }
+opentelemetry = { workspace = true }
+paste = { workspace = true }
+reqwest = { workspace = true }
+rmcp = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+utoipa = { workspace = true }
+
+[dev-dependencies]
+endpoint-test-utils = { path = "../endpoint-test-utils" }
+httpmock = { workspace = true }
+testcontainers-modules = { workspace = true }
+reqwest = { workspace = true }
+tonic = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+weaviate-wire = { workspace = true }

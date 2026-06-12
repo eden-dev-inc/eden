@@ -1,0 +1,37 @@
+[package]
+name = "postgres-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+ep-core = { path = "../ep-core", default-features = false }
+postgres-wire = { path = "../../wire-protocol/postgres-wire", features = ["scram"] }
+wire-stream = { workspace = true }
+function_name = { workspace = true }
+utoipa = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+borsh = { workspace = true }
+pem = { workspace = true }
+postgres = { workspace = true }
+
+# New raw wire protocol dependencies
+deadpool = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+
+# Legacy dependencies (to be removed in Phase 8)
+bb8 = { workspace = true }
+bb8-postgres = { workspace = true }
+tokio-postgres = { workspace = true }
+tokio-postgres-rustls = { workspace = true }
+opentelemetry = { workspace = true }
+rustls = { workspace = true }
+webpki-roots = { workspace = true }
+rustls-webpki = { workspace = true }
+rustls-pki-types = { workspace = true }
+bytes = { workspace = true }

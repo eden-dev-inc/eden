@@ -1,0 +1,54 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+#[cfg(feature = "aws")]
+pub use aws_core;
+#[cfg(feature = "azure")]
+pub use azure_core;
+#[cfg(feature = "cassandra")]
+pub use cassandra_core;
+#[cfg(feature = "clickhouse")]
+pub use clickhouse_core;
+#[cfg(feature = "databricks")]
+pub use databricks_core;
+#[cfg(feature = "datadog")]
+pub use datadog_core;
+pub use endpoint_schema;
+pub use ep_core;
+#[cfg(feature = "eraser")]
+pub use eraser_core;
+#[cfg(feature = "function")]
+pub use function_core;
+#[cfg(feature = "gitlab")]
+pub use gitlab_core;
+#[cfg(feature = "gworkspace")]
+pub use gworkspace_core;
+#[cfg(feature = "http")]
+pub use http_core;
+
+#[cfg(feature = "llm")]
+pub use llm_core;
+#[cfg(feature = "mongo")]
+pub use mongo_core;
+#[cfg(feature = "mssql")]
+pub use mssql_core;
+#[cfg(feature = "mysql")]
+pub use mysql_core;
+#[cfg(feature = "oracle")]
+pub use oracle_core;
+#[cfg(feature = "pinecone")]
+pub use pinecone_core;
+#[cfg(feature = "postgres")]
+pub use postgres_core;
+#[cfg(feature = "redis")]
+pub use redis_core;
+#[cfg(feature = "s3")]
+pub use s3_core;
+#[cfg(feature = "salesforce")]
+pub use salesforce_core;
+#[cfg(feature = "snowflake")]
+pub use snowflake_core;
+#[cfg(feature = "tavily")]
+pub use tavily_core;
+#[cfg(feature = "weaviate")]
+pub use weaviate_core;
+
+pub use endpoint_schema::{EndpointSchemaInput, endpoint, schema};

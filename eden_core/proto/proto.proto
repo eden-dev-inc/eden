@@ -1,0 +1,78 @@
+syntax = "proto3";
+package proto;
+
+service StorageService {
+  rpc SendTransaction (TransactionRequest) returns (TransactionReply);
+}
+
+service EngineService {
+  rpc SendTransaction (TransactionRequest) returns (TransactionReply);
+  rpc SendReadRequest (EndpointRequest) returns (EndpointResponse);
+  rpc SendWriteRequest (EndpointRequest) returns (EndpointResponse);
+  rpc SendEpConnect (EndpointConnect) returns (EndpointResponse);
+  rpc SendEpDisconnect (EndpointDisconnect) returns (EndpointResponse);
+}
+
+service BlockService {
+  rpc SendTransaction (TransactionRequest) returns (TransactionReply);
+}
+
+message EndpointConnect {
+  bytes insert_endpoint = 1;
+  bytes settings = 2;
+  //  map<string, string> trace_context = 15; // trace context
+}
+
+message EndpointDisconnect {
+  bytes disconnect_info = 1; // disconnect info struct
+  bytes settings = 2; // eden settings
+  //  map<string, string> trace_context = 15; // trace context
+}
+
+message EndpointRequest {
+  bytes request = 1;
+  bytes org_uuid = 2;
+  bytes endpoint_uuid = 3;
+  string endpoint_kind = 4;
+  bytes settings = 5;
+  //  map<string, string> trace_context = 15; // trace context
+}
+
+message EndpointResponse {
+  string output = 1;   // JSON serialized response
+  //  map<string, string> trace_context = 15; // trace context
+}
+
+
+message TransactionRequest {
+  bytes a = 1;    // auth
+  bytes b = 2;    // config
+  string o = 3;   // organization
+  string s = 4;   // kind
+}
+
+message TransactionReply {
+  string s = 1;   // serialized response
+}
+
+// each unique struct should have a corresponding enum name
+enum Kind {
+  Redis = 0;
+  Postgres = 1;
+  Mysql = 2;
+  Mssql = 3;
+  Mongo = 4;
+  Oracle = 5;
+}
+
+service ConsensusService {
+  rpc SendBlock (BlockRequest) returns (BlockReply);
+}
+
+message BlockRequest {
+  bytes b = 1;
+}
+
+message BlockReply {
+  bytes b = 1;
+}

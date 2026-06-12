@@ -1,0 +1,24 @@
+[package]
+name = "auth"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+error = { path = "../error", default-features = false }
+format = { path = "../format" }
+borsh = { workspace = true }
+hex = { workspace = true }
+opentelemetry = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+jwt = { workspace = true }
+uuid = { workspace = true }
+postgres-types = { workspace = true }
+rand = { workspace = true }
+bytes = { workspace = true }
+utoipa = { workspace = true }
+
+[lints]
+workspace = true

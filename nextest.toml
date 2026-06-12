@@ -1,0 +1,5 @@
+# nextest.toml
+[profile.default]
+retries = 2
+# Note: We can't specify features in nextest.toml as of current version, 
+# so we'll need to use command line for that

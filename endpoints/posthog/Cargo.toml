@@ -1,0 +1,42 @@
+[package]
+name = "ep-posthog"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+ep-core = { path = "../../endpoint-core/ep-core", default-features = false }
+posthog-core = { path = "../../endpoint-core/posthog-core", default-features = false }
+endpoint-types = { path = "../endpoint-types" }
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+
+borsh = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+ctor = { workspace = true }
+dashmap = { workspace = true }
+deadpool = { workspace = true }
+derive_builder = { workspace = true }
+function_name = { workspace = true }
+lazy_static = { workspace = true }
+linkme = { workspace = true }
+opentelemetry = { workspace = true }
+paste = { workspace = true }
+reqwest = { workspace = true }
+rmcp = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+urlencoding = { workspace = true }
+utoipa = { workspace = true }
+
+[dev-dependencies]
+httpmock = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

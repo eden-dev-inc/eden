@@ -1,0 +1,39 @@
+INSERT INTO llm_user_tools_endpoints (
+    id,
+    organization_uuid,
+    created_by,
+    name,
+    description,
+    client_key,
+    tools_url,
+    bearer_token,
+    tool_snapshot,
+    validated_at,
+    last_error
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11
+)
+RETURNING
+    id,
+    organization_uuid,
+    created_by,
+    name,
+    description,
+    client_key,
+    tools_url,
+    bearer_token,
+    tool_snapshot,
+    validated_at,
+    last_error,
+    created_at,
+    updated_at;

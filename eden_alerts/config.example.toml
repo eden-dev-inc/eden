@@ -1,0 +1,105 @@
+# Eden Alerts Configuration Example
+# Copy this file to config.toml and customize for your environment.
+
+# Polling interval - how often to check ClickHouse for alert conditions
+poll_interval_secs = 30
+
+# Time window for queries - how far back to look for data
+window_minutes = 5
+
+# ClickHouse connection settings
+[clickhouse]
+url = "http://localhost:8123"
+database = "analytics"
+# user = "default"
+# password = "secret"
+
+# Notification settings
+[notify]
+enabled = true
+
+# Rate limiting - prevent notification storms
+[notify.rate_limit]
+max_per_window = 20  # Maximum notifications per window
+window_secs = 60     # Window duration in seconds
+
+# Deduplication - prevent duplicate alerts
+[notify.dedup]
+window_secs = 300    # 5 minutes
+
+# Notification backends
+# You can configure multiple backends and alerts will be sent to all of them
+
+# Slack webhook backend
+[[notify.backends]]
+type = "slack"
+webhook_url = "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+channel = "#alerts"           # Optional: override default channel
+username = "Eden Alerts"      # Optional: bot username
+icon_emoji = ":warning:"      # Optional: bot icon
+
+# Generic webhook backend (optional)
+# [[notify.backends]]
+# type = "webhook"
+# url = "https://your-webhook-endpoint.com/alerts"
+# [[notify.backends.headers]]
+# name = "Authorization"
+# value = "Bearer your-token"
+
+# Alert Rules
+
+# Threshold-based alerts - trigger when metrics exceed thresholds
+[[rules.thresholds]]
+id = "high_error_rate"
+metric = "error_rate"          # error_rate, slow_rate, avg_latency_us, p95_latency_us, max_latency_us, request_count
+operator = "greater_than"      # greater_than, less_than, greater_than_or_equal, less_than_or_equal
+threshold = 0.10               # 10% error rate
+min_requests = 100             # Only trigger if at least 100 requests
+cooldown_secs = 300            # 5 minute cooldown between alerts
+description = "High error rate detected"
+
+[[rules.thresholds]]
+id = "high_latency"
+metric = "p95_latency_us"
+operator = "greater_than"
+threshold = 100000             # 100ms
+min_requests = 50
+cooldown_secs = 300
+
+[[rules.thresholds]]
+id = "slow_query_rate"
+metric = "slow_rate"
+operator = "greater_than"
+threshold = 0.05               # 5% slow queries
+min_requests = 100
+cooldown_secs = 600
+
+# Anti-pattern alerts - trigger on detected anti-patterns
+[[rules.anti_patterns]]
+id = "hot_keys"
+pattern_types = ["hot_key"]    # Empty array matches all types
+min_occurrences = 10           # Minimum occurrences to trigger
+cooldown_secs = 300
+
+[[rules.anti_patterns]]
+id = "n_plus_one"
+pattern_types = ["n_plus_one"]
+min_occurrences = 5
+cooldown_secs = 600
+
+[[rules.anti_patterns]]
+id = "all_patterns"
+pattern_types = []             # Match all anti-pattern types
+min_occurrences = 20
+cooldown_secs = 900
+
+# Periodic report rules - scheduled summary notifications
+[[rules.reports]]
+id = "hourly_summary"
+interval_secs = 3600           # 1 hour
+top_n = 5                      # Include top 5 endpoints/patterns
+
+[[rules.reports]]
+id = "daily_summary"
+interval_secs = 86400          # 24 hours
+top_n = 10

@@ -1,0 +1,25 @@
+[package]
+name = "format"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+postgres = { workspace = true }
+error = { path = "../error", default-features = false }
+borsh = { workspace = true }
+hex = { workspace = true }
+indextreemap = { workspace = true }
+redis = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+uuid = { workspace = true }
+utoipa = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }
+paste = { workspace = true }
+schemars = { workspace = true }
+bitflags = { workspace = true }
+
+[lints]
+workspace = true

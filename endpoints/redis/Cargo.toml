@@ -1,0 +1,60 @@
+[package]
+name = "ep-redis"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+ep-core = { path = "../../endpoint-core/ep-core", default-features = false }
+redis-core = { path = "../../endpoint-core/redis-core", default-features = false }
+endpoint-derive = { path = "../endpoint-derive" }
+endpoint-types = { path = "../endpoint-types" }
+database = { path = "../../database", default-features = false }
+error = { path = "../../eden_core/error" }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+
+actix-web = { workspace = true }
+base64 = { workspace = true }
+bigdecimal = { workspace = true }
+borsh = { workspace = true }
+bytes = { workspace = true }
+chrono = { workspace = true }
+ctor = { workspace = true }
+dashmap = { workspace = true }
+deadpool = { workspace = true }
+derive_builder = { workspace = true }
+function_name = { workspace = true }
+futures = { workspace = true }
+itoa = { workspace = true }
+lazy_static = { workspace = true }
+memchr = { workspace = true }
+linkme = { workspace = true }
+opentelemetry = { workspace = true }
+redis = { workspace = true }
+redis-protocol = { workspace = true }
+regex = { workspace = true }
+reqwest = { workspace = true }
+rmcp = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+shell-words = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+utoipa = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+endpoint-test-utils = { path = "../endpoint-test-utils" }
+httpmock = { workspace = true }
+testcontainers-modules = { workspace = true }
+serial_test = { workspace = true }
+
+[[bench]]
+name = "redis_command_classifier"
+harness = false
+
+[features]
+integration = []

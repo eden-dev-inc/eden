@@ -1,0 +1,26 @@
+[package]
+name = "mysql-wire"
+description = "MySQL wire protocol streaming parser"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+compression = ["flate2"]
+
+[dependencies]
+wire-stream = { workspace = true }
+thiserror = { workspace = true }
+memchr = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+bitflags = "2.4"
+flate2 = { version = "1.0", optional = true }
+
+[dev-dependencies]
+pollster = { workspace = true }
+criterion = { workspace = true }
+proptest = { workspace = true }
+
+[lints]
+workspace = true

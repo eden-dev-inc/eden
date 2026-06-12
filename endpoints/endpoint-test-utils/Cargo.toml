@@ -1,0 +1,24 @@
+[package]
+name = "endpoint-test-utils"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+embedded-db = ["database/embedded-db", "endpoint-core/embedded-db", "endpoint-types/embedded-db"]
+
+[dependencies]
+database = { path = "../../database", default-features = false, features = ["test-utils"] }
+endpoint-core = { path = "../../endpoint-core", default-features = false }
+endpoint-types = { path = "../endpoint-types" }
+format = { path = "../../eden_core/format" }
+telemetry = { path = "../../eden_core/telemetry" }
+testcontainers-modules = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+utoipa = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+
+[lints]
+workspace = true

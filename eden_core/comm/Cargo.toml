@@ -1,0 +1,18 @@
+[package]
+name = "comm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+error = { path = "../error", default-features = false }
+format = { path = "../format" }
+ep-core = { path = "../../endpoint-core/ep-core", default-features = false }
+proto = { path = "../proto" }
+utoipa = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+borsh = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

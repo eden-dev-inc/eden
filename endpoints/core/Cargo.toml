@@ -1,0 +1,111 @@
+[package]
+name = "endpoint"
+version = "0.1.0"
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+database = { path = "../../database", default-features = false }
+eden_logger_internal = { workspace = true }
+eden_logger = { workspace = true }
+ep-core = { path = "../../endpoint-core/ep-core", default-features = false }
+endpoint-types = { path = "../endpoint-types" }
+telemetry = { path = "../../eden_core/telemetry" }
+error = { path = "../../eden_core/error", default-features = false }
+format = { path = "../../eden_core/format" }
+redis-core = { path = "../../endpoint-core/redis-core", default-features = false, optional = true }
+
+ep-aws = { path = "../aws", optional = true }
+ep-azure = { path = "../azure", optional = true }
+ep-cassandra = { path = "../cassandra", optional = true }
+ep-clickhouse = { path = "../clickhouse", optional = true }
+ep-databricks = { path = "../databricks", optional = true }
+ep-datadog = { path = "../datadog", optional = true }
+ep-function = { path = "../function", optional = true }
+ep-gitlab = { path = "../gitlab", optional = true }
+ep-gworkspace = { path = "../gworkspace", optional = true }
+ep-http = { path = "../http", optional = true }
+ep-llm = { path = "../llm", optional = true }
+ep-mongo = { path = "../mongo", optional = true }
+ep-mssql = { path = "../mssql", optional = true }
+ep-mysql = { path = "../mysql", optional = true }
+ep-oracle = { path = "../oracle", optional = true }
+ep-pinecone = { path = "../pinecone", optional = true }
+ep-posthog = { path = "../posthog", optional = true }
+ep-postgres = { path = "../postgres", optional = true }
+ep-s3 = { path = "../s3", optional = true }
+ep-redis = { path = "../redis", optional = true }
+ep-elasticache = { path = "../elasticache", optional = true }
+ep-rds = { path = "../rds", optional = true }
+ep-eraser = { path = "../eraser", optional = true }
+ep-salesforce = { path = "../salesforce", optional = true }
+ep-snowflake = { path = "../snowflake", optional = true }
+ep-tavily = { path = "../tavily", optional = true }
+ep-weaviate = { path = "../weaviate", optional = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+endpoint-test-utils = { path = "../endpoint-test-utils" }
+testcontainers-modules = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+default = []
+all = [
+    "aws",
+    "azure",
+    "cassandra",
+    "clickhouse",
+    "databricks",
+    "datadog",
+    "elasticache",
+    "eraser",
+    "function",
+    "gitlab",
+    "gworkspace",
+    "http",
+    "llm",
+    "mongo",
+    "mssql",
+    "mysql",
+    "oracle",
+    "pinecone",
+    "postgres",
+    "posthog",
+    "rds",
+    "redis",
+    "s3",
+    "salesforce",
+    "snowflake",
+    "tavily",
+    "weaviate",
+]
+embedded-db = ["endpoint-types/embedded-db", "endpoint-test-utils/embedded-db"]
+aws = ["dep:ep-aws", "database/aws"]
+azure = ["dep:ep-azure", "database/azure"]
+cassandra = ["dep:ep-cassandra", "database/cassandra"]
+clickhouse = ["dep:ep-clickhouse", "database/clickhouse"]
+databricks = ["dep:ep-databricks", "database/databricks"]
+datadog = ["dep:ep-datadog", "database/datadog"]
+elasticache = ["dep:ep-elasticache", "database/elasticache", "redis"]
+eraser = ["dep:ep-eraser", "database/eraser"]
+function = ["dep:ep-function", "database/function"]
+gitlab = ["dep:ep-gitlab", "database/gitlab"]
+gworkspace = ["dep:ep-gworkspace", "database/gworkspace"]
+http = ["dep:ep-http", "database/http"]
+llm = ["dep:ep-llm", "database/llm"]
+mongo = ["dep:ep-mongo", "database/mongo"]
+mssql = ["dep:ep-mssql", "database/mssql"]
+mysql = ["dep:ep-mysql", "database/mysql"]
+oracle = ["dep:ep-oracle", "database/oracle"]
+pinecone = ["dep:ep-pinecone", "database/pinecone"]
+postgres = ["dep:ep-postgres", "database/postgres"]
+posthog = ["dep:ep-posthog", "database/posthog"]
+rds = ["dep:ep-rds", "database/rds", "postgres"]
+redis = ["dep:ep-redis", "dep:redis-core", "database/redis"]
+s3 = ["dep:ep-s3", "database/s3"]
+salesforce = ["dep:ep-salesforce", "database/salesforce"]
+snowflake = ["dep:ep-snowflake", "database/snowflake"]
+tavily = ["dep:ep-tavily", "database/tavily"]
+weaviate = ["dep:ep-weaviate", "database/weaviate"]

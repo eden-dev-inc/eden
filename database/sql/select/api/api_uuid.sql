@@ -1,0 +1,1 @@
+SELECT * FROM apis WHERE uuid = $1 LIMIT 1;
