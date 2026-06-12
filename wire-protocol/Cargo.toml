@@ -10,10 +10,8 @@ resp-wire = { path = "resp-wire" }
 mongo-wire = { path = "mongo-wire" }
 clickhouse-wire = { path = "clickhouse-wire" }
 weaviate-wire = { path = "weaviate-wire" }
-oracle-wire = { path = "oracle-wire" }
 mysql-wire = { path = "mysql-wire" }
 postgres-wire = { path = "postgres-wire" }
-sybase-wire = { path = "sybase-wire" }
 thiserror = { workspace = true }
 memchr = { workspace = true }
 elsa = { workspace = true }

@@ -14,6 +14,10 @@ thiserror = { workspace = true }
 memchr = { workspace = true }
 md-5 = "0.10"
 bitflags = "2.4"
+ahash = { workspace = true }
+bytes = { workspace = true }
+dashmap = { workspace = true }
+xxhash-rust = { workspace = true }
 
 # SCRAM-SHA-256 authentication (optional)
 sha2 = { version = "0.10", optional = true }

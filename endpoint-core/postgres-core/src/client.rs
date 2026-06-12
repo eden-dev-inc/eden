@@ -1,4 +1,4 @@
-use crate::codec::{PgBuffer, PgStream};
+use crate::codec::{PgBuffer, PgStream, PgStreamReader, PgStreamWriter};
 use crate::url::PostgresConnectionParsed;
 use bytes::{Bytes, BytesMut};
 use error::{EpError, ResultEP};
@@ -9,6 +9,7 @@ use postgres_wire::types::startup::StartupMessage;
 use postgres_wire::write::MessageBuilder;
 use std::collections::HashMap;
 use std::time::Instant;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use wire_stream::SliceStream;
 
 use postgres_wire::parse::PgParseSync;
@@ -30,6 +31,17 @@ pub struct PostgresClient {
     /// 'I' = idle, 'T' = in transaction, 'E' = failed transaction.
     transaction_status: u8,
     /// Increments `eden.connections{db_type=postgres}` on creation, decrements on drop.
+    _conn_guard: telemetry::ConnectionGuard,
+}
+
+pub struct PostgresClientWriter {
+    writer: PgStreamWriter,
+}
+
+pub struct PostgresClientReader {
+    reader: PgStreamReader,
+    buffer: PgBuffer,
+    transaction_status: u8,
     _conn_guard: telemetry::ConnectionGuard,
 }
 
@@ -65,6 +77,19 @@ impl PostgresClient {
         client.startup_handshake().await?;
 
         Ok(client)
+    }
+
+    pub fn into_split(self) -> (PostgresClientWriter, PostgresClientReader) {
+        let (writer, reader) = self.stream.into_split();
+        (
+            PostgresClientWriter { writer },
+            PostgresClientReader {
+                reader,
+                buffer: self.buffer,
+                transaction_status: self.transaction_status,
+                _conn_guard: self._conn_guard,
+            },
+        )
     }
 
     /// Perform the PostgreSQL startup handshake and authentication.
@@ -345,7 +370,7 @@ impl PostgresClient {
     ///
     /// Returns (raw_response_bytes, network_latency_us).
     pub async fn send_query_raw(&mut self, bytes: &[u8]) -> ResultEP<(Bytes, u64)> {
-        let mut response = BytesMut::new();
+        let mut response = BytesMut::with_capacity(8192);
         let network_latency_us = self
             .send_query_raw_with_frame_handler(bytes, |frame| {
                 response.extend_from_slice(&frame);
@@ -384,7 +409,7 @@ impl PostgresClient {
     /// Data flow: stream → PgBuffer → scan for complete messages → copy to response.
     /// Partial messages stay in PgBuffer until more data arrives.
     pub async fn read_until_ready(&mut self) -> ResultEP<Bytes> {
-        let mut response = BytesMut::new();
+        let mut response = BytesMut::with_capacity(8192);
 
         self.read_until_ready_with_frame_handler(|frame| {
             response.extend_from_slice(&frame);
@@ -822,6 +847,51 @@ impl PostgresClient {
             }
         }
         if message.is_empty() { "Unknown error".to_string() } else { message }
+    }
+}
+
+impl PostgresClientWriter {
+    pub(crate) async fn write_query_raw_no_response(&mut self, bytes: &[u8]) -> ResultEP<()> {
+        self.writer.write_all(bytes).await.map_err(|e| EpError::request(format!("Write error: {e}")))?;
+        self.writer.flush().await.map_err(|e| EpError::request(format!("Flush error: {e}")))
+    }
+}
+
+impl PostgresClientReader {
+    fn has_complete_message(&self) -> bool {
+        let data = self.buffer.unprocessed();
+        if data.len() < 5 {
+            return false;
+        }
+        let length = i32::from_be_bytes([data[1], data[2], data[3], data[4]]) as usize;
+        data.len() > length
+    }
+
+    pub(crate) async fn read_response_group_raw_bytes(&mut self) -> ResultEP<Bytes> {
+        let mut response = BytesMut::with_capacity(8192);
+        loop {
+            while self.has_complete_message() {
+                let data = self.buffer.unprocessed();
+                let msg_type = data[0];
+                let length = i32::from_be_bytes([data[1], data[2], data[3], data[4]]) as usize;
+                let total = 1 + length;
+
+                let msg_bytes = self.buffer.split_to_bytes(total);
+                if msg_type == backend::READY_FOR_QUERY {
+                    self.transaction_status = msg_bytes[5];
+                }
+                let ready_for_query = msg_type == backend::READY_FOR_QUERY;
+                response.extend_from_slice(&msg_bytes);
+                if ready_for_query {
+                    return Ok(response.freeze());
+                }
+            }
+
+            let n = self.reader.read_buf(self.buffer.buffer_mut()).await.map_err(|e| EpError::request(format!("Read error: {e}")))?;
+            if n == 0 {
+                return Err(EpError::request("Connection closed by server while waiting for ReadyForQuery"));
+            }
+        }
     }
 }
 

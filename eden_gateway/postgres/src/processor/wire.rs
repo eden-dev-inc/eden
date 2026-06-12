@@ -83,20 +83,28 @@ pub(crate) fn extract_bind_statement(msg_bytes: &[u8]) -> Option<String> {
     Some(std::str::from_utf8(&rest[..stmt_end]).ok()?.to_string())
 }
 
-pub(crate) fn response_has_ready_for_query(bytes: &[u8]) -> bool {
+pub(crate) fn ready_for_query_status(bytes: &[u8]) -> Option<u8> {
     let mut idx = 0usize;
-    let mut last_type: Option<u8> = None;
+    let mut last_ready_status = None;
     while idx + 5 <= bytes.len() {
         let msg_type = bytes[idx];
         let len = i32::from_be_bytes([bytes[idx + 1], bytes[idx + 2], bytes[idx + 3], bytes[idx + 4]]) as usize;
         let total = 1 + len;
         if total == 0 || idx + total > bytes.len() {
-            return false;
+            return None;
         }
-        last_type = Some(msg_type);
+        last_ready_status = if msg_type == b'Z' && total >= 6 {
+            Some(bytes[idx + 5])
+        } else {
+            None
+        };
         idx += total;
     }
-    matches!(last_type, Some(b'Z'))
+    if idx == bytes.len() { last_ready_status } else { None }
+}
+
+pub(crate) fn response_has_ready_for_query(bytes: &[u8]) -> bool {
+    ready_for_query_status(bytes).is_some()
 }
 
 pub(crate) fn build_q_message(sql: &str) -> Vec<u8> {
@@ -194,6 +202,15 @@ pub(crate) enum TxState {
 }
 
 impl TxState {
+    pub(crate) fn from_ready_status(status: u8) -> Option<Self> {
+        match status {
+            b'I' => Some(TxState::Idle),
+            b'T' => Some(TxState::InTransaction),
+            b'E' => Some(TxState::Failed),
+            _ => None,
+        }
+    }
+
     pub(crate) fn ready_for_query(self) -> Vec<u8> {
         match self {
             TxState::Idle => ReadyForQuery::idle().encode(),
@@ -225,6 +242,33 @@ mod tests {
         let msg = build_q_message(sql);
         let pg_bytes = PostgresBytes::from(msg);
         assert_eq!(pg_bytes.extract_sql().expect("extract_sql"), sql);
+    }
+
+    #[test]
+    fn ready_for_query_status_reads_trailing_status() {
+        let mut response = fake_command_complete("SELECT 1");
+        response.extend_from_slice(&ReadyForQuery::in_transaction().encode());
+
+        assert_eq!(ready_for_query_status(&response), Some(b'T'));
+        assert!(response_has_ready_for_query(&response));
+    }
+
+    #[test]
+    fn ready_for_query_status_requires_rfq_to_be_last_complete_message() {
+        let mut response = ReadyForQuery::idle().encode();
+        response.extend_from_slice(&fake_command_complete("SELECT 1"));
+
+        assert_eq!(ready_for_query_status(&response), None);
+        assert!(!response_has_ready_for_query(&response));
+    }
+
+    #[test]
+    fn ready_for_query_status_rejects_trailing_partial_bytes() {
+        let mut response = ReadyForQuery::idle().encode();
+        response.extend_from_slice(b"Z");
+
+        assert_eq!(ready_for_query_status(&response), None);
+        assert!(!response_has_ready_for_query(&response));
     }
 
     fn fake_command_complete(tag: &str) -> Vec<u8> {

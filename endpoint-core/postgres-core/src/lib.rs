@@ -37,6 +37,7 @@ pub mod client;
 pub mod codec;
 pub mod config;
 pub mod connection;
+pub mod multiplex;
 pub mod pool;
 pub mod typed;
 pub mod url;

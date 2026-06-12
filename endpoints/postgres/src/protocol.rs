@@ -14,8 +14,10 @@ use error::{EpError, ResultEP};
 use format::endpoint::EpKind;
 use postgres_core::PgRawPool;
 use postgres_core::client::PostgresClient;
+use postgres_wire::sql::{PgReqType, classify_sql_req_type};
 
 pub use crate::ep::PgPinnedConnection;
+pub use postgres_wire::sql::skip_sql_comments;
 
 /// Raw PG wire protocol bytes for passthrough.
 ///
@@ -31,6 +33,10 @@ impl PostgresBytes {
 
     pub fn bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    pub fn into_bytes(self) -> Bytes {
+        self.0
     }
 
     /// Extract SQL string from the raw Q message bytes.
@@ -89,8 +95,8 @@ impl EpWireRequest<PgRawPool> for PostgresBytes {
     }
 
     fn request_type(&self) -> ResultEP<ReqType> {
-        //! Without classification, we default to `Read`
-        Ok(ReqType::Read)
+        let sql = self.extract_sql()?;
+        Ok(req_type_from_pg(classify_sql_req_type(sql)))
     }
 
     async fn send_raw_bytes(&self, context: &PgRawPool) -> ResultEP<(Bytes, u64)> {
@@ -110,44 +116,11 @@ impl EpWireRequest<PgRawPool> for PostgresBytes {
 // SQL Classification
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Skip SQL line comments (`--`) and block comments (`/* */`).
-///
-/// Handles nested block comments per PostgreSQL syntax:
-/// `/* outer /* inner */ still comment */` is a single comment.
-pub fn skip_sql_comments(sql: &str) -> &str {
-    let mut s = sql;
-    loop {
-        s = s.trim_start();
-        if s.starts_with("--") {
-            s = s.find('\n').map_or("", |pos| &s[pos + 1..]);
-        } else if s.starts_with("/*") {
-            s = skip_nested_block_comment(s);
-        } else {
-            return s;
-        }
+fn req_type_from_pg(req_type: PgReqType) -> ReqType {
+    match req_type {
+        PgReqType::Read => ReqType::Read,
+        PgReqType::Write => ReqType::Write,
     }
-}
-
-/// Skip a (possibly nested) `/* ... */` block comment, returning the remainder.
-fn skip_nested_block_comment(s: &str) -> &str {
-    let bytes = s.as_bytes();
-    let mut depth = 0u32;
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'/' && bytes[i + 1] == b'*' {
-            depth += 1;
-            i += 2;
-        } else if bytes[i] == b'*' && bytes[i + 1] == b'/' {
-            depth -= 1;
-            i += 2;
-            if depth == 0 {
-                return &s[i..];
-            }
-        } else {
-            i += 1;
-        }
-    }
-    ""
 }
 
 /// Extract the primary table name from SQL for conflict detection and analytics key hashing.
@@ -648,21 +621,29 @@ mod tests {
 
     #[test]
     fn test_request_type() {
-        let sql = "SELECT 1";
+        let pg_bytes = PostgresBytes::from(make_q_message("SELECT 1"));
+        assert_eq!(
+            <PostgresBytes as EpWireRequest<PgRawPool>>::request_type(&pg_bytes).expect("request_type"),
+            ReqType::Read
+        );
+
+        let pg_bytes = PostgresBytes::from(make_q_message("UPDATE users SET name = 'a'"));
+        assert_eq!(
+            <PostgresBytes as EpWireRequest<PgRawPool>>::request_type(&pg_bytes).expect("request_type"),
+            ReqType::Write
+        );
+    }
+
+    // ---- extract_pk_values_from_sql tests ----
+
+    fn make_q_message(sql: &str) -> Vec<u8> {
         let len = (4 + sql.len() + 1) as i32;
         let mut msg = vec![b'Q'];
         msg.extend_from_slice(&len.to_be_bytes());
         msg.extend_from_slice(sql.as_bytes());
         msg.push(0);
-
-        let pg_bytes = PostgresBytes::from(msg);
-        assert_eq!(
-            <PostgresBytes as EpWireRequest<PgRawPool>>::request_type(&pg_bytes).expect("request_type"),
-            ReqType::Read
-        );
+        msg
     }
-
-    // ---- extract_pk_values_from_sql tests ----
 
     fn pk_cols(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()

@@ -309,6 +309,7 @@ dependencies = [
  "const-random",
  "getrandom 0.3.4",
  "once_cell",
+ "serde",
  "version_check",
  "zerocopy",
 ]
@@ -1847,15 +1848,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "block-padding"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8894febbff9f758034a5b8e12d87918f56dfc64a8e1fe757d65e29041538d93"
-dependencies = [
- "generic-array",
-]
-
-[[package]]
 name = "bollard"
 version = "0.19.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2240,15 +2232,6 @@ name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
-
-[[package]]
-name = "cbc"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26b52a9543ae338f279b96b0b9fed9c8093744685043739079ce85cd58f289a6"
-dependencies = [
- "cipher",
-]
 
 [[package]]
 name = "cc"
@@ -5997,6 +5980,7 @@ dependencies = [
 name = "gateway-postgres"
 version = "0.1.0"
 dependencies = [
+ "ahash 0.8.12",
  "base64 0.22.1",
  "bb8",
  "bb8-redis",
@@ -6023,6 +6007,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-postgres",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -7016,7 +7001,6 @@ version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
- "block-padding",
  "generic-array",
 ]
 
@@ -8614,25 +8598,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oracle-wire"
-version = "0.1.0"
-dependencies = [
- "aes",
- "cbc",
- "criterion",
- "flate2",
- "hex",
- "hmac 0.12.1",
- "memchr",
- "pollster 0.4.0 (git+https://github.com/zesterer/pollster.git?rev=5f595dbecb6c9d0dfacc133b88066e6a3750862c)",
- "proptest",
- "sha1 0.10.6",
- "sha2 0.10.9",
- "thiserror 1.0.69",
- "wire-stream",
-]
-
-[[package]]
 name = "oracle_procmacro"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9425,9 +9390,12 @@ dependencies = [
 name = "postgres-wire"
 version = "0.1.0"
 dependencies = [
+ "ahash 0.8.12",
  "base64 0.22.1",
  "bitflags 2.11.1",
+ "bytes",
  "criterion",
+ "dashmap 7.0.0-rc2",
  "hmac 0.12.1",
  "md-5 0.10.6",
  "memchr",
@@ -9437,6 +9405,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 1.0.69",
  "wire-stream",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -12009,18 +11978,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "sybase-wire"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "memchr",
- "pollster 0.4.0 (git+https://github.com/zesterer/pollster.git?rev=5f595dbecb6c9d0dfacc133b88066e6a3750862c)",
- "proptest",
- "thiserror 1.0.69",
- "wire-stream",
-]
-
-[[package]]
 name = "symlink"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14423,11 +14380,9 @@ dependencies = [
  "memchr",
  "mongo-wire",
  "mysql-wire",
- "oracle-wire",
  "pollster 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "postgres-wire",
  "resp-wire",
- "sybase-wire",
  "thiserror 1.0.69",
  "weaviate-wire",
  "wire-stream",

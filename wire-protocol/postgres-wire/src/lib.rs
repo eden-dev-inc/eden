@@ -55,8 +55,11 @@
 
 pub mod error;
 pub mod extensions;
+pub mod frontend;
 pub mod limits;
 pub mod parse;
+pub mod sql;
+pub mod stmt_cache;
 pub mod types;
 pub mod write;
 

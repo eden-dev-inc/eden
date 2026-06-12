@@ -207,12 +207,12 @@ pub mod type_name {
     /// Key ID type.
     pub const KEY_ID: &str = "key_id";
 
-    // orafce extension (Oracle compatibility)
-    /// Oracle VARCHAR2 type.
+    // orafce extension compatibility aliases
+    /// VARCHAR2 compatibility type.
     pub const VARCHAR2: &str = "varchar2";
-    /// Oracle NVARCHAR2 type.
+    /// NVARCHAR2 compatibility type.
     pub const NVARCHAR2: &str = "nvarchar2";
-    /// Oracle DATE type (includes time).
+    /// DATE compatibility type (includes time).
     pub const ORADATE: &str = "date";
 
     // mobilitydb extension (temporal/trajectory data)

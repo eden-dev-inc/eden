@@ -32,16 +32,21 @@ use eden_gateway_core::traits::{BytesQueueSender, DatabaseProtocolProcessor, Pro
 use eden_logger_internal::{LogAudience, LogContext, log_debug, log_error, log_info, log_trace, log_warn};
 use endpoints::endpoint::EP;
 use endpoints::endpoint::postgres::ep::PostgresEp;
-use endpoints::endpoint::postgres::protocol::{PgPinnedConnection, PostgresBytes, skip_sql_comments};
+use endpoints::endpoint::postgres::protocol::{PgPinnedConnection, PostgresBytes};
 use ep_core::ReqType;
 use ep_core::database::schema::interlay::{InterlaySignal, InterlayState};
 use ep_core::settings::EdenSettings;
+use postgres_wire::frontend::extended_batch_mux_safety;
+use postgres_wire::sql::{
+    PgMuxSafety, PgReqType, classify_sql as classify_pg_sql, first_sql_keyword as pg_first_sql_keyword, multiplex_safety,
+    write_multiplex_safety,
+};
 use postgres_wire::types::{AuthenticationRequest, BackendKeyData, EmptyQueryResponse, ErrorResponse, ParameterStatus};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -55,9 +60,14 @@ use tx::{
 use wire::{
     CANCEL_REQUEST_CODE, CONNECTION_COUNTER, MSG_BIND, MSG_CLOSE, MSG_COPY_DATA, MSG_COPY_DONE, MSG_COPY_FAIL, MSG_DESCRIBE, MSG_EXECUTE,
     MSG_FLUSH, MSG_PARSE, MSG_QUERY, MSG_SYNC, MSG_TERMINATE, PROTOCOL_VERSION_3_0, SSL_REQUEST_CODE, TxState, build_command_complete_msg,
-    build_q_message, extract_bind_statement, extract_close_statement, extract_parse_sql, parse_startup_params,
+    build_q_message, extract_bind_statement, extract_close_statement, extract_parse_sql, parse_startup_params, ready_for_query_status,
     response_has_ready_for_query, strip_leading_command_completes,
 };
+
+type FastHashMap<K, V> = HashMap<K, V, ahash::RandomState>;
+
+static MULTIPLEX_AUTOCOMMIT_WRITES: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("EDEN_POSTGRES_MULTIPLEX_AUTOCOMMIT_WRITES").map(|value| value == "1").unwrap_or(false));
 
 fn comparable_request_duration_us(batch_duration_us: u64, command_count: u64, backend_command_count: u64) -> Option<u64> {
     (command_count > 0 && command_count == backend_command_count).then_some(batch_duration_us)
@@ -70,19 +80,215 @@ fn pg_req_type_label(req_type: &ReqType) -> &'static str {
     }
 }
 
+fn first_sql_keyword(sql: &str) -> String {
+    pg_first_sql_keyword(sql)
+}
+
 fn classify_sql(sql: &str) -> ReqType {
-    let first = skip_sql_comments(sql.trim()).split_whitespace().next().unwrap_or("").to_ascii_uppercase();
-    match first.as_str() {
-        "SELECT" | "SHOW" | "EXPLAIN" | "DESCRIBE" | "WITH" => ReqType::Read,
-        _ => ReqType::Write,
+    match classify_pg_sql(sql).req_type {
+        PgReqType::Read => ReqType::Read,
+        PgReqType::Write => ReqType::Write,
     }
 }
 
 fn is_session_command(sql: &str) -> bool {
-    matches!(
-        skip_sql_comments(sql.trim()).split_whitespace().next().unwrap_or("").to_ascii_uppercase().as_str(),
-        "SET" | "RESET" | "DISCARD"
-    )
+    classify_pg_sql(sql).is_session_state
+}
+
+fn sql_may_touch_connection_session(sql: &str) -> bool {
+    is_session_command(sql)
+        || contains_ascii_case_insensitive(sql, "SET_CONFIG")
+        || contains_ascii_case_insensitive(sql, "PG_ADVISORY_LOCK")
+        || contains_ascii_case_insensitive(sql, "PG_TRY_ADVISORY_LOCK")
+        || contains_ascii_case_insensitive(sql, "LISTEN")
+        || contains_ascii_case_insensitive(sql, "UNLISTEN")
+        || contains_ascii_case_insensitive(sql, "CREATE TEMP")
+        || contains_ascii_case_insensitive(sql, "CREATE TEMPORARY")
+        || contains_ascii_case_insensitive(sql, "INTO TEMP")
+        || contains_ascii_case_insensitive(sql, "INTO TEMPORARY")
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    let haystack = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+
+    haystack
+        .windows(needle.len())
+        .any(|window| window.iter().zip(needle.iter()).all(|(lhs, rhs)| lhs.eq_ignore_ascii_case(rhs)))
+}
+
+fn is_multiplex_safe_simple_sql(sql: &str) -> bool {
+    multiplex_safety(sql).is_safe()
+}
+
+fn is_multiplex_safe_autocommit_write_sql(sql: &str) -> bool {
+    *MULTIPLEX_AUTOCOMMIT_WRITES && write_multiplex_safety(sql).is_safe()
+}
+
+fn is_multiplex_safe_simple_request(sql: &str) -> bool {
+    is_multiplex_safe_simple_sql(sql) || is_multiplex_safe_autocommit_write_sql(sql)
+}
+
+fn is_multiplex_safe_extended_batch(raw_batch: &[u8], sql_safety: PgMuxSafety) -> bool {
+    sql_safety.is_safe() && extended_batch_mux_safety(raw_batch).is_safe()
+}
+
+fn is_multiplex_safe_statement_cache_batch(raw_batch: &[u8], sql_safety: PgMuxSafety) -> bool {
+    sql_safety.is_safe() && stmt_cache::statement_cache_mux_safety(raw_batch).is_safe()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_multiplex_safe_autocommit_write_sql, is_multiplex_safe_extended_batch, is_multiplex_safe_simple_sql};
+    use postgres_wire::sql::{multiplex_safety, write_multiplex_safety};
+
+    #[test]
+    fn multiplex_safe_simple_sql_allows_read_only_autocommit_verbs() {
+        assert!(is_multiplex_safe_simple_sql("SELECT 1"));
+        assert!(is_multiplex_safe_simple_sql("SELECT 1;"));
+        assert!(is_multiplex_safe_simple_sql("SELECT ';';"));
+        assert!(is_multiplex_safe_simple_sql("SHOW server_version"));
+    }
+
+    #[test]
+    fn multiplex_safe_simple_sql_rejects_dml_and_sessionful_verbs() {
+        for sql in [
+            "INSERT INTO t VALUES (1)",
+            "UPDATE t SET x = 1",
+            "DELETE FROM t",
+            "WITH updated AS (UPDATE t SET x = 1 RETURNING x) SELECT x FROM updated",
+            "BEGIN;",
+            "COMMIT;",
+            "END;",
+            "SELECT 1; SELECT 2",
+            "SELECT 1; SET search_path TO public",
+            "EXPLAIN ANALYZE UPDATE t SET x = 1",
+            "DESCRIBE table_name",
+            "SET search_path TO public;",
+            "SELECT nextval('ids')",
+            "SELECT * FROM jobs FOR UPDATE",
+        ] {
+            assert!(!is_multiplex_safe_simple_sql(sql), "{sql}");
+        }
+    }
+
+    #[test]
+    fn autocommit_write_sql_parser_allows_conservative_single_dml() {
+        for sql in ["INSERT INTO t VALUES (1)", "UPDATE t SET x = 1", "DELETE FROM t WHERE id = 1"] {
+            assert!(write_multiplex_safety(sql).is_safe(), "{sql}");
+        }
+    }
+
+    #[test]
+    fn autocommit_write_sql_helper_is_opt_in() {
+        if std::env::var("EDEN_POSTGRES_MULTIPLEX_AUTOCOMMIT_WRITES").ok().as_deref() == Some("1") {
+            return;
+        }
+        assert!(!is_multiplex_safe_autocommit_write_sql("INSERT INTO t VALUES (1)"));
+    }
+
+    #[test]
+    fn autocommit_write_sql_parser_rejects_transactions_and_ambiguous_writes() {
+        for sql in [
+            "BEGIN",
+            "COMMIT",
+            "UPDATE t SET x = 1; UPDATE t SET x = 2",
+            "WITH updated AS (UPDATE t SET x = 1 RETURNING x) SELECT x FROM updated",
+            "CREATE TABLE t(id int)",
+            "UPDATE t SET x = set_config('app.user', 'x', false)",
+            "UPDATE public.t SET x = 1",
+            "INSERT INTO t VALUES (1) RETURNING id",
+            "INSERT INTO t VALUES (1) ON CONFLICT DO NOTHING",
+            "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET x = s.x",
+        ] {
+            assert!(!write_multiplex_safety(sql).is_safe(), "{sql}");
+        }
+    }
+
+    #[test]
+    fn first_sql_keyword_strips_trailing_statement_punctuation() {
+        assert_eq!(super::first_sql_keyword("BEGIN;"), "BEGIN");
+        assert_eq!(super::first_sql_keyword("END;"), "END");
+        assert_eq!(super::first_sql_keyword("ROLLBACK;"), "ROLLBACK");
+        assert_eq!(super::first_sql_keyword("/* comment */ SELECT 1;"), "SELECT");
+    }
+
+    fn msg(msg_type: u8, payload: &[u8]) -> Vec<u8> {
+        let length = (4 + payload.len()) as i32;
+        let mut out = Vec::with_capacity(1 + 4 + payload.len());
+        out.push(msg_type);
+        out.extend_from_slice(&length.to_be_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    fn parse(stmt_name: &str, sql: &str) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(stmt_name.as_bytes());
+        payload.push(0);
+        payload.extend_from_slice(sql.as_bytes());
+        payload.push(0);
+        payload.extend_from_slice(&0i16.to_be_bytes());
+        msg(b'P', &payload)
+    }
+
+    fn bind(portal_name: &str, stmt_name: &str) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(portal_name.as_bytes());
+        payload.push(0);
+        payload.extend_from_slice(stmt_name.as_bytes());
+        payload.push(0);
+        payload.extend_from_slice(&0i16.to_be_bytes());
+        payload.extend_from_slice(&0i16.to_be_bytes());
+        payload.extend_from_slice(&0i16.to_be_bytes());
+        msg(b'B', &payload)
+    }
+
+    fn execute(portal_name: &str) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(portal_name.as_bytes());
+        payload.push(0);
+        payload.extend_from_slice(&0i32.to_be_bytes());
+        msg(b'E', &payload)
+    }
+
+    fn sync() -> Vec<u8> {
+        msg(b'S', &[])
+    }
+
+    #[test]
+    fn multiplex_safe_extended_batch_allows_read_only_unnamed_one_shot() {
+        let mut batch = Vec::new();
+        batch.extend_from_slice(&parse("", "SELECT 1"));
+        batch.extend_from_slice(&bind("", ""));
+        batch.extend_from_slice(&execute(""));
+        batch.extend_from_slice(&sync());
+
+        assert!(is_multiplex_safe_extended_batch(&batch, multiplex_safety("SELECT 1")));
+    }
+
+    #[test]
+    fn multiplex_safe_extended_batch_rejects_writes_and_named_state() {
+        let mut write_batch = Vec::new();
+        write_batch.extend_from_slice(&parse("", "UPDATE t SET x = 1"));
+        write_batch.extend_from_slice(&bind("", ""));
+        write_batch.extend_from_slice(&execute(""));
+        write_batch.extend_from_slice(&sync());
+        assert!(!is_multiplex_safe_extended_batch(&write_batch, multiplex_safety("UPDATE t SET x = 1")));
+
+        let mut named_batch = Vec::new();
+        named_batch.extend_from_slice(&parse("s1", "SELECT 1"));
+        named_batch.extend_from_slice(&bind("", "s1"));
+        named_batch.extend_from_slice(&execute(""));
+        named_batch.extend_from_slice(&sync());
+        assert!(!is_multiplex_safe_extended_batch(&named_batch, multiplex_safety("SELECT 1")));
+    }
 }
 
 fn sample_allows_mirror(sample_ratio: f64) -> bool {
@@ -96,6 +302,47 @@ fn is_pg_mirror_unsafe_sql(first_token: &str, sql: &str) -> bool {
     matches!(first_token, "BEGIN" | "START" | "COMMIT" | "END" | "ROLLBACK" | "SAVEPOINT" | "RELEASE")
         || (first_token == "SET" || first_token == "RESET" || first_token == "DISCARD")
         || (first_token == "COPY" && sql.to_ascii_uppercase().contains("STDIN"))
+}
+
+fn mirror_active_for_req_type(state: &InterlayState, req_type: &ReqType) -> bool {
+    let mirror = state.mirror();
+    mirror.enabled()
+        && !state.mirror_targets().is_empty()
+        && match req_type {
+            ReqType::Read => mirror.mirror_reads(),
+            ReqType::Write => mirror.mirror_writes(),
+        }
+}
+
+fn mirror_activity(state: &InterlayState) -> (bool, bool) {
+    (
+        mirror_active_for_req_type(state, &ReqType::Read),
+        mirror_active_for_req_type(state, &ReqType::Write),
+    )
+}
+
+fn success_response_for_client(response_bytes: Bytes, strip_command_complete_count: usize, tx_state: &mut TxState) -> Bytes {
+    if let Some(status) = ready_for_query_status(&response_bytes)
+        && let Some(next_state) = TxState::from_ready_status(status)
+    {
+        *tx_state = next_state;
+    }
+
+    let client_response = if strip_command_complete_count > 0 {
+        strip_leading_command_completes(response_bytes, strip_command_complete_count)
+    } else {
+        response_bytes
+    };
+
+    if response_has_ready_for_query(&client_response) {
+        return client_response;
+    }
+
+    let ready_for_query = tx_state.ready_for_query();
+    let mut response = BytesMut::with_capacity(client_response.len() + ready_for_query.len());
+    response.extend_from_slice(&client_response);
+    response.extend_from_slice(&ready_for_query);
+    response.freeze()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -362,6 +609,8 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
             // Pinned transaction state
             let mut pin_tracker = PgPinnedTransactionTracker::new();
             let mut pinned_conn: Option<PgPinnedConnection> = None;
+            let mut client_session_state_touched = false;
+            let mut session_pinned = false;
 
             // Service name (populated from startup message or metadata)
             let mut service_name;
@@ -380,8 +629,10 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
             let mut extended_buf: BytesMut = BytesMut::new();
             let mut extended_sql: Option<String> = None;
             let mut extended_statement_name: Option<String> = None;
+            let mut extended_safety: Option<PgMuxSafety> = None;
             let mut extended_request_bytes: u32 = 0;
-            let mut prepared_statements: HashMap<String, String> = HashMap::new();
+            let mut prepared_statements: FastHashMap<String, String> = HashMap::with_hasher(ahash::RandomState::new());
+            let mut prepared_statement_safety: FastHashMap<String, PgMuxSafety> = HashMap::with_hasher(ahash::RandomState::new());
 
             // Per-client prepared statement map for connection multiplexing.
             // Maps client statement names (e.g. "sqlx_s_1") to statement
@@ -440,6 +691,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
             };
 
             let mut routing_state = RoutingState::from_interlay_state(&initial_state);
+            let (mut mirror_reads_active, mut mirror_writes_active) = mirror_activity(&initial_state);
 
             // DW-4: Start periodic GC for write serializer locks (idempotent, low-cost).
             let ws_for_gc = Arc::clone(&self.write_serializer);
@@ -476,6 +728,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                 &cached_endpoint_uuid,
                 "postgres",
             );
+            let audit_pg_queries = eden_gateway_core::audit::pg_query_recorder_enabled();
 
             // Detect service name from metadata (startup message override comes later)
             service_name = detect_service_name(&[], &ctx);
@@ -557,15 +810,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                     }
                 };
                 let request_queue_wait_us = data.queue_wait_us();
-                telemetry_wrapper.metrics().proxy().record_bridge_request_queue(
-                    request_queue_wait_us,
-                    &[
-                        ("org_uuid", organization_uuid.as_str()),
-                        ("interlay_uuid", interlay_id_str.as_str()),
-                        ("endpoint_uuid", cached_endpoint_id.as_str()),
-                        ("endpoint_kind", "postgres"),
-                    ],
-                );
+                proxy_series.record_bridge_request_queue(request_queue_wait_us);
                 let data = data.into_bytes();
 
                 let bytes_read = data.len() as u64;
@@ -731,6 +976,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                         && let Some(state) = interlay_endpoints.get(&interlay_cache_uuid)
                     {
                         let new_routing = RoutingState::from_interlay_state(&state);
+                        (mirror_reads_active, mirror_writes_active) = mirror_activity(&state);
                         if routing_state.endpoint.uuid() != new_routing.endpoint.uuid() {
                             cached_endpoint_uuid = new_routing.endpoint.eden_uuid::<EndpointUuid>();
                             cached_endpoint_id = cached_endpoint_uuid.uuid().to_string();
@@ -799,7 +1045,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                             }
 
                             // Extract SQL type (first keyword)
-                            let upper_first = skip_sql_comments(sql_trimmed).split_whitespace().next().unwrap_or("").to_ascii_uppercase();
+                            let upper_first = first_sql_keyword(sql_trimmed);
 
                             // Create per-query tracing span
                             let mut command_span = telemetry_wrapper.client_tracer(format!("postgres.query.{}", upper_first));
@@ -976,9 +1222,6 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                     continue;
                                 }
 
-                                tx_state = TxState::Idle;
-                                pin_tracker.on_end();
-
                                 // DW-8: On COMMIT, replay buffered writes to secondary.
                                 // On ROLLBACK, discard the buffer.
                                 if dw_tx_buffer.is_active() {
@@ -1013,18 +1256,27 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                             // Copy SQL before moving msg_bytes
                             let sql_owned = sql_trimmed.to_string();
                             let req_type = classify_sql(&sql_owned);
+                            let command_touches_session_state = sql_may_touch_connection_session(&sql_owned);
+                            if command_touches_session_state {
+                                client_session_state_touched = true;
+                                session_pinned = true;
+                            }
 
                             let is_write = req_type == ReqType::Write;
 
                             // Resolve ELS credentials per-query from Redis so that
                             // policy changes take effect without reconnecting.
-                            let els_resolved = resolve_els_prefix(
-                                self.rbac_redis.as_ref(),
-                                &routing_state.endpoint,
-                                els_user_name.as_deref(),
-                                self.org_key_provider.as_deref(),
-                            )
-                            .await;
+                            let els_resolved = if self.rbac_redis.is_some() && els_user_name.is_some() {
+                                resolve_els_prefix(
+                                    self.rbac_redis.as_ref(),
+                                    &routing_state.endpoint,
+                                    els_user_name.as_deref(),
+                                    self.org_key_provider.as_deref(),
+                                )
+                                .await
+                            } else {
+                                None
+                            };
 
                             // When ELS is active, reject queries that attempt to override
                             // proxy-controlled session variables (SET app.*).
@@ -1056,15 +1308,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                             } else {
                                 (PostgresBytes::from(Bytes::copy_from_slice(msg_bytes.as_ref())), 0)
                             };
-                            telemetry_wrapper.metrics().proxy().record_policy_routing_duration(
-                                policy_routing_start.elapsed().as_micros() as u64,
-                                &[
-                                    ("org_uuid", organization_uuid.as_str()),
-                                    ("interlay_uuid", interlay_id_str.as_str()),
-                                    ("endpoint_uuid", cached_endpoint_id.as_str()),
-                                    ("endpoint_kind", "postgres"),
-                                ],
-                            );
+                            proxy_series.record_policy_routing_duration(policy_routing_start.elapsed().as_micros() as u64);
 
                             // DW-8: Buffer write bytes during Replicated-mode transactions.
                             // Skip buffering in 2PC mode — writes go to both connections in real-time.
@@ -1077,13 +1321,72 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                 dw_tx_buffer.push_session(Bytes::copy_from_slice(pg_bytes.bytes()));
                             }
 
+                            if client_session_state_touched && pinned_conn.is_none() {
+                                let pin_target = routing_state.endpoint.clone();
+                                let pool_wait_start = Instant::now();
+                                let pin_result = self.ep.pinned_write_connection(&pin_target, &mut telemetry_wrapper).await;
+                                telemetry_wrapper.metrics().proxy().record_backend_pool_wait(
+                                    pool_wait_start.elapsed().as_micros() as u64,
+                                    &[
+                                        ("org_uuid", organization_uuid.as_str()),
+                                        ("interlay_uuid", interlay_id_str.as_str()),
+                                        ("endpoint_uuid", cached_endpoint_id.as_str()),
+                                        ("endpoint_kind", "postgres"),
+                                    ],
+                                );
+                                match pin_result {
+                                    Ok(client) => {
+                                        if let Some(target) = cancel_target_from_conn(&client) {
+                                            cancel_registry_add(client_pid, client_secret, target);
+                                        }
+                                        pinned_conn = Some(client);
+                                        pin_tracker.mark_pinned();
+                                        log_trace!(
+                                            ctx.clone(),
+                                            "PG pinned connection acquired for session state",
+                                            audience = LogAudience::Internal,
+                                            connection_id = connection_id
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log_error!(
+                                            ctx.clone(),
+                                            "Failed to acquire pinned connection for session state",
+                                            audience = LogAudience::Internal,
+                                            error = e.to_string(),
+                                            connection_id = connection_id
+                                        );
+                                        pin_tracker.on_connection_error();
+                                        session_pinned = false;
+
+                                        let err = ErrorResponse::simple(
+                                            "ERROR",
+                                            "08006",
+                                            &format!("failed to acquire session connection: {}", e),
+                                        );
+                                        let mut resp = BytesMut::new();
+                                        resp.extend_from_slice(&err.encode());
+                                        resp.extend_from_slice(&tx_state.ready_for_query());
+                                        let resp_bytes = resp.freeze();
+                                        total_bytes_written += resp_bytes.len() as u64;
+                                        if sender.send(resp_bytes).is_err() {
+                                            return;
+                                        }
+                                        telemetry_wrapper.record(MetricEvent::ProxyError {
+                                            org_uuid: organization_uuid.as_str(),
+                                            interlay_uuid: &interlay_id_str,
+                                            error_type: "session_pin_error",
+                                        });
+                                        continue;
+                                    }
+                                }
+                            }
+
                             let mirror_pg_bytes = pg_bytes.clone();
 
                             // Execute query
                             let query_start = Instant::now();
-                            // response_has_rfq: true if the raw response already includes
-                            // ReadyForQuery from the real backend (raw wire protocol path).
-                            let (result, response_has_rfq) = if let Some(ref mut client) = pinned_conn {
+                            let result = if let Some(ref mut client) = pinned_conn {
                                 // DW-1 2PC: Mirror all queries to secondary connection.
                                 // Both databases see the same sequence of commands.
                                 if two_phase_active
@@ -1117,19 +1420,22 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                 }
 
                                 // Use pinned connection for transaction affinity (raw wire protocol).
-                                // Response includes ReadyForQuery from the real backend.
-                                let r = pg_bytes.send_raw_on_pinned(client).await.map(|(bytes, _)| bytes);
-                                (r, true)
+                                pg_bytes.send_raw_on_pinned(client).await.map(|(bytes, _)| bytes)
                             } else {
-                                // Normal routing through the pool (legacy bb8 path).
-                                // Response does NOT include ReadyForQuery.
-                                let r = route_query(
+                                // Normal routing through the raw pool. The backend response
+                                // includes ReadyForQuery; only synthesize one later if an
+                                // error path or future transport path lacks it.
+                                route_query(
                                     &self.ep,
                                     &interlay_id_str,
                                     &routing_state,
                                     pg_bytes,
                                     &sql_owned,
                                     req_type.clone(),
+                                    tx_state == TxState::Idle
+                                        && pinned_conn.is_none()
+                                        && els_set_count == 0
+                                        && !client_session_state_touched,
                                     replay_queue.as_deref(),
                                     &mut session_affinity,
                                     &self.write_serializer,
@@ -1137,16 +1443,20 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                     &mut telemetry_wrapper,
                                     &ctx,
                                 )
-                                .await;
-                                (r, false)
+                                .await
                             };
 
                             let query_duration_us = query_start.elapsed().as_micros() as u64;
                             backend_duration_sum += query_duration_us;
                             backend_command_count += 1;
 
-                            if let Ok(primary_response) = &result
-                                && let Some(state) = interlay_endpoints.get(&interlay_cache_uuid).map(|state| state.clone())
+                            let mirror_active = match req_type {
+                                ReqType::Read => mirror_reads_active,
+                                ReqType::Write => mirror_writes_active,
+                            };
+                            if mirror_active
+                                && let Ok(primary_response) = &result
+                                && let Some(state) = interlay_endpoints.get(&interlay_cache_uuid)
                             {
                                 let mirror_skip_reason = if pinned_conn.is_some() {
                                     Some("pinned_connection")
@@ -1157,7 +1467,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                 };
                                 spawn_postgres_mirrors(
                                     &self.ep,
-                                    &state,
+                                    state.value(),
                                     &organization_uuid,
                                     &interlay_id_label,
                                     req_type,
@@ -1171,11 +1481,8 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                             }
 
                             let response_encode_start = Instant::now();
-                            let mut response = BytesMut::new();
-                            let query_success;
-                            match result {
+                            let resp_bytes = match result {
                                 Ok(response_bytes) => {
-                                    query_success = true;
                                     command_span.add_event(
                                         "query completed",
                                         vec![
@@ -1184,42 +1491,23 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                         ],
                                     );
 
-                                    // Per-query audit trail
-                                    eden_gateway_core::audit::pg_query_record(
-                                        &organization_uuid,
-                                        &endpoint_uuid,
-                                        &upper_first,
-                                        query_duration_us,
-                                        true,
-                                        &service_name,
-                                        Some(&client_ip),
-                                        connection_id,
-                                    );
-
-                                    // Extract transaction status from ReadyForQuery in raw response
-                                    if response_has_rfq && response_bytes.len() >= 6 {
-                                        let end = response_bytes.len();
-                                        // ReadyForQuery: 'Z'(1) + length(4) + status(1) = 6 bytes at end
-                                        if response_bytes[end - 6] == b'Z' {
-                                            tx_state = match response_bytes[end - 1] {
-                                                b'I' => TxState::Idle,
-                                                b'T' => TxState::InTransaction,
-                                                b'E' => TxState::Failed,
-                                                _ => tx_state,
-                                            };
-                                        }
+                                    if audit_pg_queries {
+                                        eden_gateway_core::audit::pg_query_record(
+                                            &organization_uuid,
+                                            &endpoint_uuid,
+                                            &upper_first,
+                                            query_duration_us,
+                                            true,
+                                            &service_name,
+                                            Some(&client_ip),
+                                            connection_id,
+                                        );
                                     }
 
-                                    // Strip ELS SET CommandComplete messages before sending to client
-                                    let client_response = if els_set_count > 0 {
-                                        strip_leading_command_completes(response_bytes, els_set_count)
-                                    } else {
-                                        response_bytes
-                                    };
-                                    response.extend_from_slice(&client_response);
+                                    success_response_for_client(response_bytes, els_set_count, &mut tx_state)
                                 }
                                 Err(e) => {
-                                    query_success = false;
+                                    let mut response = BytesMut::new();
                                     if tx_state == TxState::InTransaction {
                                         tx_state = TxState::Failed;
                                     }
@@ -1232,23 +1520,29 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                         sql = &sql_owned
                                     );
 
-                                    // Per-query audit trail (error)
-                                    eden_gateway_core::audit::pg_query_record(
-                                        &organization_uuid,
-                                        &endpoint_uuid,
-                                        &upper_first,
-                                        query_duration_us,
-                                        false,
-                                        &service_name,
-                                        Some(&client_ip),
-                                        connection_id,
-                                    );
+                                    if audit_pg_queries {
+                                        eden_gateway_core::audit::pg_query_record(
+                                            &organization_uuid,
+                                            &endpoint_uuid,
+                                            &upper_first,
+                                            query_duration_us,
+                                            false,
+                                            &service_name,
+                                            Some(&client_ip),
+                                            connection_id,
+                                        );
+                                    }
 
-                                    // If pinned and error, mark connection as failed
-                                    if pinned_conn.is_some() && is_begin {
+                                    if pinned_conn.is_some() {
                                         cancel_registry_clear(client_pid, client_secret);
                                         pin_tracker.on_connection_error();
                                         pinned_conn = None;
+                                        session_pinned = false;
+                                        if two_phase_active {
+                                            cleanup_2pc_conn(&mut pinned_conn_secondary, false, &ctx).await;
+                                            two_phase_active = false;
+                                            two_phase_doomed = false;
+                                        }
                                     }
 
                                     response.extend_from_slice(&ErrorResponse::simple("ERROR", "XX000", &e.to_string()).encode());
@@ -1258,25 +1552,31 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                         interlay_uuid: &interlay_id_str,
                                         error_type: "command_error",
                                     });
+                                    if !response_has_ready_for_query(&response) {
+                                        response.extend_from_slice(&tx_state.ready_for_query());
+                                    }
+                                    response.freeze()
+                                }
+                            };
+                            proxy_series.record_response_encode_duration(response_encode_start.elapsed().as_micros() as u64);
+
+                            if pinned_conn.is_some() {
+                                match tx_state {
+                                    TxState::Idle => pin_tracker.on_end(),
+                                    TxState::InTransaction | TxState::Failed => pin_tracker.on_begin(),
                                 }
                             }
 
-                            // Append synthetic ReadyForQuery only when the raw response
-                            // does not already contain one (legacy bb8 path + error responses).
-                            if !response_has_rfq || !query_success {
-                                response.extend_from_slice(&tx_state.ready_for_query());
+                            if is_begin && tx_state == TxState::Idle {
+                                dw_tx_buffer.discard();
+                                if two_phase_active {
+                                    cancel_registry_clear(client_pid, client_secret);
+                                    cleanup_2pc_conn(&mut pinned_conn_secondary, false, &ctx).await;
+                                    two_phase_active = false;
+                                    two_phase_doomed = false;
+                                }
                             }
-                            telemetry_wrapper.metrics().proxy().record_response_encode_duration(
-                                response_encode_start.elapsed().as_micros() as u64,
-                                &[
-                                    ("org_uuid", organization_uuid.as_str()),
-                                    ("interlay_uuid", interlay_id_str.as_str()),
-                                    ("endpoint_uuid", cached_endpoint_id.as_str()),
-                                    ("endpoint_kind", "postgres"),
-                                ],
-                            );
 
-                            let resp_bytes = response.freeze();
                             total_bytes_written += resp_bytes.len() as u64;
                             if sender.send(resp_bytes).is_err() {
                                 telemetry_wrapper.metrics().proxy().record_bridge_enqueue_rejection(&[
@@ -1291,7 +1591,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                             }
 
                             // Release pinned connection after COMMIT/END/ROLLBACK
-                            if pin_tracker.should_release() && pinned_conn.is_some() {
+                            if tx_state == TxState::Idle && pin_tracker.should_release() && pinned_conn.is_some() && !session_pinned {
                                 // Return pinned connection to pool (drop).
                                 // Statement cache is per-backend and persists.
                                 cancel_registry_clear(client_pid, client_secret);
@@ -1313,6 +1613,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                     );
                                     if let Some(state) = interlay_endpoints.get(&interlay_cache_uuid) {
                                         let new_routing = RoutingState::from_interlay_state(&state);
+                                        (mirror_reads_active, mirror_writes_active) = mirror_activity(&state);
                                         if routing_state.endpoint.uuid() != new_routing.endpoint.uuid() {
                                             cached_endpoint_uuid = new_routing.endpoint.eden_uuid::<EndpointUuid>();
                                             cached_endpoint_id = cached_endpoint_uuid.uuid().to_string();
@@ -1333,8 +1634,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                         MSG_PARSE => {
                             if let Some((statement_name, sql)) = extract_parse_sql(&msg_bytes) {
                                 let sql_trimmed = sql.trim();
-                                let upper_first =
-                                    skip_sql_comments(sql_trimmed).split_whitespace().next().unwrap_or("").to_ascii_uppercase();
+                                let upper_first = first_sql_keyword(sql_trimmed);
 
                                 if !sql_trimmed.is_empty() {
                                     let mut command_span = telemetry_wrapper.client_tracer(format!("postgres.parse.{}", upper_first));
@@ -1342,21 +1642,27 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                 }
 
                                 prepared_statements.insert(statement_name.clone(), sql.clone());
+                                prepared_statement_safety.insert(statement_name.clone(), multiplex_safety(&sql));
                                 extended_sql = Some(sql);
                                 extended_statement_name = Some(statement_name);
+                                extended_safety = extended_sql.as_deref().map(multiplex_safety);
                             }
 
                             // ELS: Resolve per-batch from Redis and inject SET commands as a
                             // simple query (Q message) before the first PARSE. Reject queries
                             // that attempt to override ELS-controlled session variables.
                             if !extended_els_injected {
-                                let els_batch_resolved = resolve_els_prefix(
-                                    self.rbac_redis.as_ref(),
-                                    &routing_state.endpoint,
-                                    els_user_name.as_deref(),
-                                    self.org_key_provider.as_deref(),
-                                )
-                                .await;
+                                let els_batch_resolved = if self.rbac_redis.is_some() && els_user_name.is_some() {
+                                    resolve_els_prefix(
+                                        self.rbac_redis.as_ref(),
+                                        &routing_state.endpoint,
+                                        els_user_name.as_deref(),
+                                        self.org_key_provider.as_deref(),
+                                    )
+                                    .await
+                                } else {
+                                    None
+                                };
                                 if let Some((ref prefix, set_count)) = els_batch_resolved
                                     && let Some(ref sql_str) = extended_sql
                                 {
@@ -1383,6 +1689,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                         extended_buf.clear();
                                         extended_sql = None;
                                         extended_statement_name = None;
+                                        extended_safety = None;
                                         extended_request_bytes = 0;
                                         extended_els_injected = false;
                                         extended_els_set_count = 0;
@@ -1405,6 +1712,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                 if let Some(sql) = prepared_statements.get(&statement_name) {
                                     extended_sql = Some(sql.clone());
                                 }
+                                extended_safety = prepared_statement_safety.get(&statement_name).copied();
                             }
 
                             extended_request_bytes = extended_request_bytes.saturating_add(msg_bytes.len() as u32);
@@ -1419,6 +1727,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                             // prevent unbounded growth on long-lived connections.
                             if let Some(name) = extract_close_statement(&msg_bytes) {
                                 prepared_statements.remove(&name);
+                                prepared_statement_safety.remove(&name);
                             }
                             extended_request_bytes = extended_request_bytes.saturating_add(msg_bytes.len() as u32);
                             extended_buf.extend_from_slice(&msg_bytes);
@@ -1440,11 +1749,14 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                 && let Some(sql) = prepared_statements.get(&statement_name)
                             {
                                 extended_sql = Some(sql.clone());
+                                extended_safety = prepared_statement_safety.get(&statement_name).copied();
                             }
 
                             let sql_owned = extended_sql.clone().unwrap_or_default();
                             let sql_trimmed = sql_owned.trim();
-                            let upper_first = sql_trimmed.split_whitespace().next().unwrap_or("").to_ascii_uppercase();
+                            let upper_first = first_sql_keyword(sql_trimmed);
+                            let extended_mux_safety = extended_safety.unwrap_or_else(|| multiplex_safety(sql_trimmed));
+                            let _extended_can_multiplex = extended_mux_safety.is_safe();
 
                             // DW-18: Detect BEGIN/COMMIT/ROLLBACK/SAVEPOINT in extended query path.
                             // Must handle pinning and tx buffer before the batch is sent.
@@ -1611,8 +1923,6 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                     continue;
                                 }
 
-                                pin_tracker.on_end();
-
                                 // DW-8: On COMMIT, replay buffered writes to secondary.
                                 // On ROLLBACK, discard the buffer.
                                 if dw_tx_buffer.is_active() {
@@ -1650,8 +1960,21 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                             } else {
                                 classify_sql(sql_trimmed)
                             };
+                            let command_touches_session_state = !sql_owned.is_empty() && sql_may_touch_connection_session(&sql_owned);
+                            if command_touches_session_state {
+                                client_session_state_touched = true;
+                                session_pinned = true;
+                            }
                             let is_write = req_type == ReqType::Write;
                             let raw_batch = extended_buf.split();
+                            let allow_shared_backend = tx_state == TxState::Idle
+                                && pinned_conn.is_none()
+                                && extended_els_set_count == 0
+                                && !client_session_state_touched;
+                            let allow_extended_multiplex =
+                                allow_shared_backend && is_multiplex_safe_extended_batch(&raw_batch, extended_mux_safety);
+                            let allow_prepared_multiplex =
+                                allow_shared_backend && is_multiplex_safe_statement_cache_batch(&raw_batch, extended_mux_safety);
                             let policy_routing_start = Instant::now();
 
                             // DW-20: Buffer write bytes during Replicated-mode transactions.
@@ -1664,15 +1987,68 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                             if dw_tx_buffer.is_active() && !two_phase_active && is_session_command(&sql_owned) {
                                 dw_tx_buffer.push_session(Bytes::copy_from_slice(&raw_batch));
                             }
-                            telemetry_wrapper.metrics().proxy().record_policy_routing_duration(
-                                policy_routing_start.elapsed().as_micros() as u64,
-                                &[
-                                    ("org_uuid", organization_uuid.as_str()),
-                                    ("interlay_uuid", interlay_id_str.as_str()),
-                                    ("endpoint_uuid", cached_endpoint_id.as_str()),
-                                    ("endpoint_kind", "postgres"),
-                                ],
-                            );
+                            proxy_series.record_policy_routing_duration(policy_routing_start.elapsed().as_micros() as u64);
+
+                            if client_session_state_touched && pinned_conn.is_none() {
+                                let pin_target = routing_state.endpoint.clone();
+                                let pool_wait_start = Instant::now();
+                                let pin_result = self.ep.pinned_write_connection(&pin_target, &mut telemetry_wrapper).await;
+                                telemetry_wrapper.metrics().proxy().record_backend_pool_wait(
+                                    pool_wait_start.elapsed().as_micros() as u64,
+                                    &[
+                                        ("org_uuid", organization_uuid.as_str()),
+                                        ("interlay_uuid", interlay_id_str.as_str()),
+                                        ("endpoint_uuid", cached_endpoint_id.as_str()),
+                                        ("endpoint_kind", "postgres"),
+                                    ],
+                                );
+                                match pin_result {
+                                    Ok(client) => {
+                                        if let Some(target) = cancel_target_from_conn(&client) {
+                                            cancel_registry_add(client_pid, client_secret, target);
+                                        }
+                                        pinned_conn = Some(client);
+                                        pin_tracker.mark_pinned();
+                                        log_trace!(
+                                            ctx.clone(),
+                                            "PG pinned connection acquired for extended session state",
+                                            audience = LogAudience::Internal,
+                                            connection_id = connection_id
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log_error!(
+                                            ctx.clone(),
+                                            "Failed to acquire pinned connection for extended session state",
+                                            audience = LogAudience::Internal,
+                                            error = e.to_string(),
+                                            connection_id = connection_id
+                                        );
+                                        pin_tracker.on_connection_error();
+                                        session_pinned = false;
+
+                                        let err = ErrorResponse::simple(
+                                            "ERROR",
+                                            "08006",
+                                            &format!("failed to acquire session connection: {}", e),
+                                        );
+                                        let mut resp = BytesMut::new();
+                                        resp.extend_from_slice(&err.encode());
+                                        resp.extend_from_slice(&tx_state.ready_for_query());
+                                        let resp_bytes = resp.freeze();
+                                        total_bytes_written += resp_bytes.len() as u64;
+                                        if sender.send(resp_bytes).is_err() {
+                                            return;
+                                        }
+                                        telemetry_wrapper.record(MetricEvent::ProxyError {
+                                            org_uuid: organization_uuid.as_str(),
+                                            interlay_uuid: &interlay_id_str,
+                                            error_type: "session_pin_error",
+                                        });
+                                        continue;
+                                    }
+                                }
+                            }
 
                             // Execute query via raw wire protocol
                             let query_start = Instant::now();
@@ -1719,19 +2095,33 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                 }
                             } else {
                                 // Direct routing through the current endpoint.
-                                route_extended_query(&self.ep, &routing_state, &raw_batch, &mut client_stmt_map, req_type.clone()).await
+                                route_extended_query(
+                                    &self.ep,
+                                    &routing_state,
+                                    &raw_batch,
+                                    &mut client_stmt_map,
+                                    req_type.clone(),
+                                    allow_extended_multiplex,
+                                    allow_prepared_multiplex,
+                                )
+                                .await
                             };
 
                             let query_duration_us = query_start.elapsed().as_micros() as u64;
                             backend_duration_sum += query_duration_us;
                             backend_command_count += 1;
 
-                            if let Ok(primary_response) = &result
-                                && let Some(state) = interlay_endpoints.get(&interlay_cache_uuid).map(|state| state.clone())
+                            let mirror_active = match req_type {
+                                ReqType::Read => mirror_reads_active,
+                                ReqType::Write => mirror_writes_active,
+                            };
+                            if mirror_active
+                                && let Ok(primary_response) = &result
+                                && let Some(state) = interlay_endpoints.get(&interlay_cache_uuid)
                             {
                                 spawn_postgres_mirrors(
                                     &self.ep,
-                                    &state,
+                                    state.value(),
                                     &organization_uuid,
                                     &interlay_id_label,
                                     req_type,
@@ -1745,8 +2135,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                             }
 
                             let response_encode_start = Instant::now();
-                            let mut response = BytesMut::new();
-                            match result {
+                            let resp_bytes = match result {
                                 Ok(response_bytes) => {
                                     command_span.add_event(
                                         "query completed",
@@ -1756,40 +2145,23 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                         ],
                                     );
 
-                                    // Extract transaction status from ReadyForQuery in raw response
-                                    if response_bytes.len() >= 6 {
-                                        let end = response_bytes.len();
-                                        if response_bytes[end - 6] == b'Z' {
-                                            tx_state = match response_bytes[end - 1] {
-                                                b'I' => TxState::Idle,
-                                                b'T' => TxState::InTransaction,
-                                                b'E' => TxState::Failed,
-                                                _ => tx_state,
-                                            };
-                                        }
+                                    if audit_pg_queries {
+                                        eden_gateway_core::audit::pg_query_record(
+                                            &organization_uuid,
+                                            &endpoint_uuid,
+                                            &upper_first,
+                                            query_duration_us,
+                                            true,
+                                            &service_name,
+                                            Some(&client_ip),
+                                            connection_id,
+                                        );
                                     }
 
-                                    // Per-query audit trail
-                                    eden_gateway_core::audit::pg_query_record(
-                                        &organization_uuid,
-                                        &endpoint_uuid,
-                                        &upper_first,
-                                        query_duration_us,
-                                        true,
-                                        &service_name,
-                                        Some(&client_ip),
-                                        connection_id,
-                                    );
-
-                                    // Strip ELS SET CommandComplete messages before sending to client
-                                    let client_response = if extended_els_set_count > 0 {
-                                        strip_leading_command_completes(response_bytes, extended_els_set_count)
-                                    } else {
-                                        response_bytes
-                                    };
-                                    response.extend_from_slice(&client_response);
+                                    success_response_for_client(response_bytes, extended_els_set_count, &mut tx_state)
                                 }
                                 Err(e) => {
+                                    let mut response = BytesMut::new();
                                     if tx_state == TxState::InTransaction {
                                         tx_state = TxState::Failed;
                                     }
@@ -1802,17 +2174,30 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                         sql = &sql_owned
                                     );
 
-                                    // Per-query audit trail (error)
-                                    eden_gateway_core::audit::pg_query_record(
-                                        &organization_uuid,
-                                        &endpoint_uuid,
-                                        &upper_first,
-                                        query_duration_us,
-                                        false,
-                                        &service_name,
-                                        Some(&client_ip),
-                                        connection_id,
-                                    );
+                                    if audit_pg_queries {
+                                        eden_gateway_core::audit::pg_query_record(
+                                            &organization_uuid,
+                                            &endpoint_uuid,
+                                            &upper_first,
+                                            query_duration_us,
+                                            false,
+                                            &service_name,
+                                            Some(&client_ip),
+                                            connection_id,
+                                        );
+                                    }
+
+                                    if pinned_conn.is_some() {
+                                        cancel_registry_clear(client_pid, client_secret);
+                                        pin_tracker.on_connection_error();
+                                        pinned_conn = None;
+                                        session_pinned = false;
+                                        if two_phase_active {
+                                            cleanup_2pc_conn(&mut pinned_conn_secondary, false, &ctx).await;
+                                            two_phase_active = false;
+                                            two_phase_doomed = false;
+                                        }
+                                    }
 
                                     response.extend_from_slice(&ErrorResponse::simple("ERROR", "XX000", &e.to_string()).encode());
 
@@ -1821,21 +2206,13 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                         interlay_uuid: &interlay_id_str,
                                         error_type: "command_error",
                                     });
+                                    if !response_has_ready_for_query(&response) {
+                                        response.extend_from_slice(&tx_state.ready_for_query());
+                                    }
+                                    response.freeze()
                                 }
-                            }
-
-                            if !response_has_ready_for_query(&response) {
-                                response.extend_from_slice(&tx_state.ready_for_query());
-                            }
-                            telemetry_wrapper.metrics().proxy().record_response_encode_duration(
-                                response_encode_start.elapsed().as_micros() as u64,
-                                &[
-                                    ("org_uuid", organization_uuid.as_str()),
-                                    ("interlay_uuid", interlay_id_str.as_str()),
-                                    ("endpoint_uuid", cached_endpoint_id.as_str()),
-                                    ("endpoint_kind", "postgres"),
-                                ],
-                            );
+                            };
+                            proxy_series.record_response_encode_duration(response_encode_start.elapsed().as_micros() as u64);
 
                             // DW-18: Undo BEGIN pin/buffer if the BEGIN batch failed.
                             // If we set up pinning for BEGIN but the backend remained Idle
@@ -1852,7 +2229,6 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                                 }
                             }
 
-                            let resp_bytes = response.freeze();
                             total_bytes_written += resp_bytes.len() as u64;
                             if sender.send(resp_bytes).is_err() {
                                 telemetry_wrapper.metrics().proxy().record_bridge_enqueue_rejection(&[
@@ -1867,7 +2243,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
                             }
 
                             // Release pinned connection at transaction end
-                            if tx_state == TxState::Idle && pin_tracker.should_release() && pinned_conn.is_some() {
+                            if tx_state == TxState::Idle && pin_tracker.should_release() && pinned_conn.is_some() && !session_pinned {
                                 cancel_registry_clear(client_pid, client_secret);
                                 pinned_conn = None;
                                 pin_tracker.release();
@@ -1875,6 +2251,7 @@ impl DatabaseProtocolProcessor for PostgresProtocolProcessor {
 
                             extended_sql = None;
                             extended_statement_name = None;
+                            extended_safety = None;
                             extended_request_bytes = 0;
                             extended_els_injected = false;
                             extended_els_set_count = 0;
@@ -2001,6 +2378,7 @@ async fn route_query(
     pg_bytes: PostgresBytes,
     sql: &str,
     req_type: ReqType,
+    allow_multiplex: bool,
     replay_queue: Option<&ReplayQueue>,
     session_affinity: &mut SessionAffinityTracker,
     write_serializer: &WriteSerializer,
@@ -2008,6 +2386,10 @@ async fn route_query(
     telemetry_wrapper: &mut TelemetryWrapper,
     ctx: &LogContext,
 ) -> ResultEP<Bytes> {
+    if allow_multiplex && is_multiplex_safe_simple_request(sql) {
+        return ep.multiplexed_raw_bytes_with_req_type(&routing_state.endpoint, pg_bytes, req_type).await.map(|(bytes, _)| bytes);
+    }
+
     ep.raw_bytes_with_req_type(&routing_state.endpoint, pg_bytes, req_type, settings, telemetry_wrapper).await
 }
 
@@ -2067,6 +2449,26 @@ async fn route_extended_query(
     raw_batch: &[u8],
     client_stmt_map: &mut ClientStmtMap,
     eq_req_type: ReqType,
+    allow_multiplex: bool,
+    allow_prepared_multiplex: bool,
 ) -> ResultEP<Bytes> {
+    if allow_multiplex {
+        let pg_bytes = PostgresBytes::from(Bytes::copy_from_slice(raw_batch));
+        return ep.multiplexed_raw_bytes_with_req_type(&routing_state.endpoint, pg_bytes, eq_req_type).await.map(|(bytes, _)| bytes);
+    }
+
+    if allow_prepared_multiplex {
+        stmt_cache::apply_client_batch_state(raw_batch, client_stmt_map);
+        return ep
+            .multiplexed_prepared_raw_bytes_with_req_type(
+                &routing_state.endpoint,
+                Bytes::copy_from_slice(raw_batch),
+                client_stmt_map.clone(),
+                eq_req_type,
+            )
+            .await
+            .map(|(bytes, _)| bytes);
+    }
+
     execute_extended_single(ep, &routing_state.endpoint, raw_batch, client_stmt_map, eq_req_type).await
 }

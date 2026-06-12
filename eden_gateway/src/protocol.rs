@@ -40,7 +40,7 @@ impl ProtocolRW for ProxyProtocol {
             .with_feature("gateway")
             .with_organization_uuid(organization_uuid.to_string())
             .with_additional("interlay_cache_uuid", interlay_cache_uuid.to_string());
-        tokio::spawn(async move {
+        eden_gateway_core::runtime::spawn_on_current_runtime(async move {
             let organization_cache_uuid_clone = organization_cache_uuid.clone();
 
             // Use unbounded channels to avoid head-of-line blocking

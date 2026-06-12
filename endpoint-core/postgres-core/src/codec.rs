@@ -4,7 +4,7 @@ use error::{EpError, ResultEP};
 use postgres_wire::types::startup::SSLRequest;
 use std::io::{self, BufReader};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
@@ -20,6 +20,9 @@ pub enum PgStream {
     Tcp(TcpStream),
     Tls(TlsStream<TcpStream>),
 }
+
+pub type PgStreamReader = Box<dyn AsyncRead + Send + Unpin>;
+pub type PgStreamWriter = Box<dyn AsyncWrite + Send + Unpin>;
 
 /// Result of the SSL negotiation phase before TLS handshake.
 enum SslNegotiation {
@@ -169,6 +172,20 @@ impl PgStream {
         match self {
             PgStream::Tcp(stream) => stream.flush().await,
             PgStream::Tls(stream) => stream.flush().await,
+        }
+    }
+
+    /// Split the stream into independently owned read/write halves.
+    pub fn into_split(self) -> (PgStreamWriter, PgStreamReader) {
+        match self {
+            PgStream::Tcp(stream) => {
+                let (reader, writer) = stream.into_split();
+                (Box::new(writer), Box::new(reader))
+            }
+            PgStream::Tls(stream) => {
+                let (reader, writer) = tokio::io::split(stream);
+                (Box::new(writer), Box::new(reader))
+            }
         }
     }
 

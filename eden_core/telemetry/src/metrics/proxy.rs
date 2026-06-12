@@ -1666,6 +1666,9 @@ pub struct ProxySeries {
     bytes_read: DynamicCounterSeries,
     bytes_written: DynamicCounterSeries,
     errors: DynamicCounterSeries,
+    bridge_request_queue: DynamicDistributionSeries,
+    policy_routing_duration: DynamicDistributionSeries,
+    response_encode_duration: DynamicDistributionSeries,
 }
 
 /// Cached series handles for mirror hot path metrics.
@@ -1890,6 +1893,21 @@ impl ProxySeries {
     pub fn record_error(&self) {
         self.errors.inc();
     }
+
+    #[inline]
+    pub fn record_bridge_request_queue(&self, duration_us: u64) {
+        self.bridge_request_queue.record(duration_us);
+    }
+
+    #[inline]
+    pub fn record_policy_routing_duration(&self, duration_us: u64) {
+        self.policy_routing_duration.record(duration_us);
+    }
+
+    #[inline]
+    pub fn record_response_encode_duration(&self, duration_us: u64) {
+        self.response_encode_duration.record(duration_us);
+    }
 }
 
 impl ProxyMetrics {
@@ -1946,6 +1964,9 @@ impl ProxyMetrics {
             bytes_read: self.bytes_read_total.series(&labels),
             bytes_written: self.bytes_written_total.series(&labels),
             errors: self.errors_total.series(&labels),
+            bridge_request_queue: self.bridge_request_queue_microseconds.series(&labels),
+            policy_routing_duration: self.policy_routing_duration_microseconds.series(&labels),
+            response_encode_duration: self.response_encode_duration_microseconds.series(&labels),
         }
     }
 

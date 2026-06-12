@@ -74,6 +74,10 @@ pub fn init_pg_query_recorder(recorder: Box<dyn PgQueryRecorder>) {
     let _ = PG_QUERY_RECORDER.set(recorder);
 }
 
+pub fn pg_query_recorder_enabled() -> bool {
+    PG_QUERY_RECORDER.get().is_some()
+}
+
 /// Record a PostgreSQL query execution for audit trail.
 // TODO: Refactor parameters into a request/context struct to reduce argument count.
 #[allow(clippy::too_many_arguments)]

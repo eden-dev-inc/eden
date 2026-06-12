@@ -10,6 +10,7 @@ pub struct PgConnectionManager {
     config: Arc<PostgresConnectionParsed>,
     org_uuid: String,
     endpoint_uuid: Option<String>,
+    recycle_check: bool,
 }
 
 impl PgConnectionManager {
@@ -18,6 +19,7 @@ impl PgConnectionManager {
             config: Arc::new(config),
             org_uuid: SYSTEM_ORG_UUID.to_string(),
             endpoint_uuid: None,
+            recycle_check: false,
         }
     }
 
@@ -32,6 +34,14 @@ impl PgConnectionManager {
     /// per-endpoint labels on the `eden.connections` gauge.
     pub fn with_endpoint_uuid(mut self, endpoint_uuid: impl Into<String>) -> Self {
         self.endpoint_uuid = Some(endpoint_uuid.into());
+        self
+    }
+
+    /// Enable or disable active socket checks before an idle connection is
+    /// handed out again. The gateway hot path defaults this off because failed
+    /// sockets are already discarded when a request write/read fails.
+    pub fn with_recycle_check(mut self, recycle_check: bool) -> Self {
+        self.recycle_check = recycle_check;
         self
     }
 }
@@ -61,7 +71,7 @@ impl Manager for PgConnectionManager {
     }
 
     async fn recycle(&self, conn: &mut Self::Type, _metrics: &Metrics) -> RecycleResult<Self::Error> {
-        if conn.is_connected().await {
+        if !self.recycle_check || conn.is_connected().await {
             Ok(())
         } else {
             Err(deadpool::managed::RecycleError::message("client disconnected"))

@@ -13,6 +13,16 @@ use std::time::Duration;
 use telemetry::TelemetryWrapper;
 use utoipa::ToSchema;
 
+const DEFAULT_RAW_POOL_MAX_SIZE: usize = 64;
+const DEFAULT_RAW_POOL_WAIT_TIMEOUT_MS: u64 = 30_000;
+const ENV_RAW_POOL_MAX_SIZE: &str = "EDEN_POSTGRES_RAW_POOL_MAX_SIZE";
+const ENV_RAW_READ_POOL_MAX_SIZE: &str = "EDEN_POSTGRES_RAW_READ_POOL_MAX_SIZE";
+const ENV_RAW_WRITE_POOL_MAX_SIZE: &str = "EDEN_POSTGRES_RAW_WRITE_POOL_MAX_SIZE";
+const ENV_RAW_ADMIN_POOL_MAX_SIZE: &str = "EDEN_POSTGRES_RAW_ADMIN_POOL_MAX_SIZE";
+const ENV_RAW_SYSTEM_POOL_MAX_SIZE: &str = "EDEN_POSTGRES_RAW_SYSTEM_POOL_MAX_SIZE";
+const ENV_RAW_POOL_WAIT_TIMEOUT_MS: &str = "EDEN_POSTGRES_RAW_POOL_WAIT_TIMEOUT_MS";
+const ENV_RAW_POOL_RECYCLE_CHECK: &str = "EDEN_POSTGRES_RAW_POOL_RECYCLE_CHECK";
+
 /// PostgreSQL endpoint configuration.
 ///
 /// Stores a single connection **target** (host, port, database, TLS) shared
@@ -156,6 +166,39 @@ impl RWPool<PostgresAsync> for PostgresConfig {
 }
 
 impl PostgresConfig {
+    fn raw_pool_max_size_for_role(role: Option<&str>) -> usize {
+        let role_env = match role {
+            Some("read") => Some(ENV_RAW_READ_POOL_MAX_SIZE),
+            Some("write") => Some(ENV_RAW_WRITE_POOL_MAX_SIZE),
+            Some("admin") => Some(ENV_RAW_ADMIN_POOL_MAX_SIZE),
+            Some("system") => Some(ENV_RAW_SYSTEM_POOL_MAX_SIZE),
+            _ => None,
+        };
+        role_env
+            .and_then(|name| std::env::var(name).ok())
+            .or_else(|| std::env::var(ENV_RAW_POOL_MAX_SIZE).ok())
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or(DEFAULT_RAW_POOL_MAX_SIZE)
+            .max(1)
+    }
+
+    fn raw_pool_recycle_check() -> bool {
+        std::env::var(ENV_RAW_POOL_RECYCLE_CHECK)
+            .ok()
+            .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false)
+    }
+
+    fn raw_pool_wait_timeout() -> Duration {
+        Duration::from_millis(
+            std::env::var(ENV_RAW_POOL_WAIT_TIMEOUT_MS)
+                .ok()
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .unwrap_or(DEFAULT_RAW_POOL_WAIT_TIMEOUT_MS)
+                .max(1),
+        )
+    }
+
     /// Build a raw wire protocol connection pool from a PostgresConnection.
     ///
     /// The pool must be large enough to hold one connection per concurrent proxy
@@ -166,6 +209,15 @@ impl PostgresConfig {
         Self::build_raw_pool_for_endpoint(conn, telemetry::labels::SYSTEM_ORG_UUID, None)
     }
 
+    pub fn build_raw_pool_for_endpoint_role(
+        conn: &PostgresConnection,
+        org_uuid: impl Into<String>,
+        endpoint_uuid: Option<String>,
+        role: &'static str,
+    ) -> ResultEP<crate::PgRawPool> {
+        Self::build_raw_pool_for_endpoint_inner(conn, org_uuid, endpoint_uuid, Some(role))
+    }
+
     /// Build a raw pool tagged with an endpoint UUID so connections report
     /// per-endpoint labels on the `eden.connections` gauge.
     pub fn build_raw_pool_for_endpoint(
@@ -173,14 +225,25 @@ impl PostgresConfig {
         org_uuid: impl Into<String>,
         endpoint_uuid: Option<String>,
     ) -> ResultEP<crate::PgRawPool> {
+        Self::build_raw_pool_for_endpoint_inner(conn, org_uuid, endpoint_uuid, None)
+    }
+
+    fn build_raw_pool_for_endpoint_inner(
+        conn: &PostgresConnection,
+        org_uuid: impl Into<String>,
+        endpoint_uuid: Option<String>,
+        role: Option<&'static str>,
+    ) -> ResultEP<crate::PgRawPool> {
         let parsed = crate::url::PostgresConnectionParsed::from_connection(conn)?;
-        let mut manager = crate::pool::PgConnectionManager::new(parsed).with_org_uuid(org_uuid);
+        let mut manager =
+            crate::pool::PgConnectionManager::new(parsed).with_org_uuid(org_uuid).with_recycle_check(Self::raw_pool_recycle_check());
         if let Some(uuid) = endpoint_uuid {
             manager = manager.with_endpoint_uuid(uuid);
         }
         crate::PgRawPool::builder(manager)
-            .max_size(16)
-            .wait_timeout(Some(Duration::from_secs(10)))
+            .max_size(Self::raw_pool_max_size_for_role(role))
+            .queue_mode(deadpool::managed::QueueMode::Lifo)
+            .wait_timeout(Some(Self::raw_pool_wait_timeout()))
             .runtime(deadpool::Runtime::Tokio1)
             .build()
             .map_err(|e| EpError::connect(format!("Failed to build raw PG pool: {e}")))

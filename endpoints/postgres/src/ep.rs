@@ -37,8 +37,11 @@ use format::{CacheUuid, OrganizationUuid};
 use postgres_core::PgRawPool;
 use postgres_core::connection::PostgresConnection;
 use postgres_core::extract_command_complete_count;
+use postgres_core::multiplex::{PostgresDirectMultiplexer, PostgresDirectMultiplexerConfig, PostgresDispatchResponseSink};
 use postgres_core::pool::PgConnectionManager;
+use postgres_core::url::PostgresConnectionParsed;
 pub(crate) use postgres_core::{PostgresAsync, PostgresConfig, PostgresTx};
+use postgres_wire::stmt_cache::{self, ClientStmtMap};
 use telemetry::FastSpanStatus;
 use telemetry::TelemetryWrapper;
 
@@ -55,6 +58,8 @@ struct RawPgPools {
     write: Option<PgRawPool>,
     admin: Option<PgRawPool>,
     system: Option<PgRawPool>,
+    read_multiplexer: Option<PostgresDirectMultiplexer>,
+    write_multiplexer: Option<PostgresDirectMultiplexer>,
     _pool_status_pollers: Vec<telemetry::PoolStatusPollerHandle>,
 }
 
@@ -117,13 +122,28 @@ impl PostgresEp {
             .map(|org| org.eden_uuid::<OrganizationUuid>().to_string())
             .unwrap_or_else(|| telemetry::labels::SYSTEM_ORG_UUID.to_string());
         let read = downcast_pg(config.read_conn())
-            .and_then(|c| PostgresConfig::build_raw_pool_for_endpoint(&c, org_uuid.clone(), Some(ep_uuid.clone())).ok());
+            .and_then(|c| PostgresConfig::build_raw_pool_for_endpoint_role(&c, org_uuid.clone(), Some(ep_uuid.clone()), "read").ok());
         let write = downcast_pg(config.write_conn())
-            .and_then(|c| PostgresConfig::build_raw_pool_for_endpoint(&c, org_uuid.clone(), Some(ep_uuid.clone())).ok());
+            .and_then(|c| PostgresConfig::build_raw_pool_for_endpoint_role(&c, org_uuid.clone(), Some(ep_uuid.clone()), "write").ok());
         let admin = downcast_pg(config.admin_conn())
-            .and_then(|c| PostgresConfig::build_raw_pool_for_endpoint(&c, org_uuid.clone(), Some(ep_uuid.clone())).ok());
+            .and_then(|c| PostgresConfig::build_raw_pool_for_endpoint_role(&c, org_uuid.clone(), Some(ep_uuid.clone()), "admin").ok());
         let system = downcast_pg(config.system_conn())
-            .and_then(|c| PostgresConfig::build_raw_pool_for_endpoint(&c, org_uuid.clone(), Some(ep_uuid.clone())).ok());
+            .and_then(|c| PostgresConfig::build_raw_pool_for_endpoint_role(&c, org_uuid.clone(), Some(ep_uuid.clone()), "system").ok());
+
+        let multiplexer_config = PostgresDirectMultiplexerConfig::from_env();
+        let build_multiplexer = |conn: Option<PostgresConnection>, role: &str| {
+            conn.and_then(|conn| PostgresConnectionParsed::from_connection(&conn).ok()).map(|parsed| {
+                PostgresDirectMultiplexer::new_with_registry_label(
+                    parsed,
+                    org_uuid.clone(),
+                    Some(ep_uuid.clone()),
+                    format!("{ep_uuid}:{role}"),
+                    multiplexer_config,
+                )
+            })
+        };
+        let read_multiplexer = build_multiplexer(downcast_pg(config.read_conn()), "read");
+        let write_multiplexer = build_multiplexer(downcast_pg(config.write_conn()), "write");
 
         // Spawn a lazy poller that samples pool.status() every 5s to emit
         // in-use (checked out) vs open counts without touching the hot path.
@@ -144,6 +164,8 @@ impl PostgresEp {
             write,
             admin,
             system,
+            read_multiplexer,
+            write_multiplexer,
             _pool_status_pollers: pool_status_pollers,
         }
     }
@@ -190,6 +212,100 @@ impl PostgresEp {
         }
         .ok_or_else(|| EpError::connect("No pool available for raw connection"))?;
         pool.get().await.map_err(|e| EpError::connect(format!("Failed to get raw connection: {e}")))
+    }
+
+    fn multiplexer_for(pools: &RawPgPools, req_type: ep_core::ReqType) -> Option<PostgresDirectMultiplexer> {
+        match req_type {
+            ep_core::ReqType::Read => pools.read_multiplexer.as_ref().or(pools.write_multiplexer.as_ref()),
+            ep_core::ReqType::Write => pools.write_multiplexer.as_ref().or(pools.read_multiplexer.as_ref()),
+        }
+        .cloned()
+    }
+
+    pub async fn multiplexed_raw_bytes_with_req_type(
+        &self,
+        endpoint_cache_uuid: &EndpointCacheUuid,
+        bytes: crate::protocol::PostgresBytes,
+        req_type: ep_core::ReqType,
+    ) -> ResultEP<(bytes::Bytes, u64)> {
+        let multiplexer = {
+            let pools = self.raw_pools.get(endpoint_cache_uuid).ok_or_else(|| EpError::connect("No raw pool registered for endpoint"))?;
+            Self::multiplexer_for(&pools, req_type.clone())
+        };
+
+        if let Some(global) = multiplexer {
+            let multiplexer = postgres_core::multiplex::pick_multiplexer_for_dispatch(&global);
+            return multiplexer.send(bytes.into_bytes()).await;
+        }
+
+        let mut conn = self.raw_connection(endpoint_cache_uuid, req_type).await?;
+        bytes.send_raw_on_pinned(&mut conn).await
+    }
+
+    pub async fn multiplexed_prepared_raw_bytes_with_req_type(
+        &self,
+        endpoint_cache_uuid: &EndpointCacheUuid,
+        raw_batch: bytes::Bytes,
+        client_stmt_map: ClientStmtMap,
+        req_type: ep_core::ReqType,
+    ) -> ResultEP<(bytes::Bytes, u64)> {
+        let multiplexer = {
+            let pools = self.raw_pools.get(endpoint_cache_uuid).ok_or_else(|| EpError::connect("No raw pool registered for endpoint"))?;
+            Self::multiplexer_for(&pools, req_type.clone())
+        };
+
+        if let Some(global) = multiplexer {
+            let multiplexer = postgres_core::multiplex::pick_multiplexer_for_dispatch(&global);
+            return multiplexer.send_prepared(raw_batch, client_stmt_map).await;
+        }
+
+        let mut conn = self.raw_connection(endpoint_cache_uuid, req_type).await?;
+        let backend_id = conn.backend_key_data().unwrap_or((0, 0));
+        let mut client_stmt_map = client_stmt_map;
+        let rewritten = stmt_cache::rewrite_batch(&raw_batch, &mut client_stmt_map, backend_id);
+        match conn.send_query_raw(&rewritten.backend_bytes).await {
+            Ok((backend_resp, network_latency_us)) => {
+                Ok((stmt_cache::merge_responses(&backend_resp, rewritten.response_slots()), network_latency_us))
+            }
+            Err(err) => {
+                stmt_cache::invalidate_backend_cache(backend_id);
+                Err(err)
+            }
+        }
+    }
+
+    pub async fn dispatch_multiplexed_raw_bytes_with_req_type_to_sink(
+        &self,
+        endpoint_cache_uuid: &EndpointCacheUuid,
+        bytes: crate::protocol::PostgresBytes,
+        req_type: ep_core::ReqType,
+        sink: Arc<dyn PostgresDispatchResponseSink>,
+        request_received_at: std::time::Instant,
+    ) -> ResultEP<()> {
+        let multiplexer = {
+            let pools = self.raw_pools.get(endpoint_cache_uuid).ok_or_else(|| EpError::connect("No raw pool registered for endpoint"))?;
+            Self::multiplexer_for(&pools, req_type.clone())
+        };
+
+        if let Some(global) = multiplexer {
+            let multiplexer = postgres_core::multiplex::pick_multiplexer_for_dispatch(&global);
+            return multiplexer.dispatch_to_sink(bytes.into_bytes(), sink, request_received_at).await;
+        }
+
+        let result = {
+            let mut conn = self.raw_connection(endpoint_cache_uuid, req_type).await?;
+            bytes.send_raw_on_pinned(&mut conn).await
+        };
+        match result {
+            Ok((response, latency)) => {
+                sink.deliver(Ok(response), request_received_at, latency);
+                Ok(())
+            }
+            Err(err) => {
+                sink.deliver(Err(err), request_received_at, 0);
+                Ok(())
+            }
+        }
     }
 }
 
@@ -642,6 +758,8 @@ mod tests {
         RawPgPools {
             read: None,
             write: None,
+            read_multiplexer: None,
+            write_multiplexer: None,
             admin: None,
             system: None,
             _pool_status_pollers: vec![poller],
